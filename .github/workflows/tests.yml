@@ -1,0 +1,52 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    name: Host tests (${{ matrix.compiler }})
+    runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+
+    env:
+      CXX: ${{ matrix.compiler }}
+
+    steps:
+    - uses: actions/checkout@v5
+
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.13'
+
+    - name: Install Python Deps
+      run: python3 -m pip install pytest
+
+    # Each harness compiles the driver headers behind a C-linkage wrapper and
+    # drives them with ctypes. The kernels are templates, and both compilers are
+    # run because the two fold and schedule them differently, where the tests
+    # assert exact bytes. The firmware toolchain is GCC.
+    - name: Host Tests
+      run: python3 -m pytest tests -v
+
+  linting:
+    name: Python Linting
+    runs-on: ubuntu-24.04
+
+    steps:
+    - uses: actions/checkout@v5
+
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.13'
+
+    - name: Install Python Deps
+      run: python3 -m pip install ruff
+
+    - name: Lint
+      run: ruff check --config ruff.toml .
