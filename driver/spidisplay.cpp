@@ -31,6 +31,28 @@ namespace spidisplay {
 static constexpr uintptr_t PSRAM_WINDOW = 0x01000000;
 static constexpr uintptr_t PSRAM_CACHED_BASE = XIP_BASE + PSRAM_WINDOW;
 
+// Whether this RP2350 is a stepping before A4, which carry erratum E9. On those a
+// pulled-down pad latches near 2.2V once the line has been high, so a released TE line
+// would read high for good after its first pulse. The stepping is read from the bootrom
+// version, since CHIP_ID's revision field is 3 on A3 and A4 alike.
+static bool te_pads_latch() {
+    static const bool latch = rp2350_rom_version() < 4;
+    return latch;
+}
+
+static bool read_te(uint pin) {
+    if (te_pads_latch()) {
+        // Drive the line low for a moment and release it. A panel holding TE high
+        // recharges it through its resistor or diode inside the settle, a low stays low
+        gpio_put(pin, 0);
+        gpio_set_dir(pin, GPIO_OUT);
+        busy_wait_us_32(1);
+        gpio_set_dir(pin, GPIO_IN);
+        busy_wait_us_32(1);
+    }
+    return gpio_get(pin) != 0;
+}
+
 // Displays claim their workspace from the top at construction, leaving buffer() views
 // their bottom-up addresses. The M33 has no data cache, so DMA sees CPU writes at once.
 static SRAMAllocator sram;
@@ -305,11 +327,11 @@ TeProbe SPIDisplay::te_probe(uint32_t ms) {
     uint32_t rises = 0, pulses = 0;
     uint32_t first_rise = 0, last_rise = 0, rise_at = 0;
     uint32_t high_total = 0;
-    bool level = gpio_get(pin) != 0;
+    bool level = read_te(pin);
 
     // Sample the line for the window, timing each rise and each high
     while (time_us_32() - t_start < window_us) {
-        bool now_level = gpio_get(pin) != 0;
+        bool now_level = read_te(pin);
         if (now_level == level) {
             continue;
         }
@@ -358,7 +380,7 @@ TeCapture SPIDisplay::te_capture(uint32_t edges, uint32_t timeout_ms) {
     }
 
     TeCapture out = {};
-    bool level = gpio_get(pin) != 0;
+    bool level = read_te(pin);
     bool raw_prev = level;
     bool high_seen = false;
 
@@ -371,7 +393,7 @@ TeCapture SPIDisplay::te_capture(uint32_t edges, uint32_t timeout_ms) {
         }
 
         // An edge counts only after two agreeing samples, a shared line settling slowly
-        bool raw = gpio_get(pin) != 0;
+        bool raw = read_te(pin);
         bool settled = raw == raw_prev;
         raw_prev = raw;
         if (!settled || raw == level) {
@@ -418,7 +440,7 @@ TePhase SPIDisplay::te_phase(SPIDisplay &first, SPIDisplay &second,
     bool levels[DISPLAYS], raw_prev[DISPLAYS];
     bool high_seen[DISPLAYS] = {false, false};
     for (int i = 0; i < DISPLAYS; ++i) {
-        levels[i] = raw_prev[i] = gpio_get(pins[i]) != 0;
+        levels[i] = raw_prev[i] = read_te(pins[i]);
     }
 
     const uint32_t t_start = time_us_32();
@@ -432,7 +454,7 @@ TePhase SPIDisplay::te_phase(SPIDisplay &first, SPIDisplay &second,
             if (counts[i] >= edges) {   // This line already has its falls
                 continue;
             }
-            bool raw = gpio_get(pins[i]) != 0;
+            bool raw = read_te(pins[i]);
             // An edge counts only after two agreeing samples, a line settling slowly
             bool settled = raw == raw_prev[i];
             raw_prev[i] = raw;
@@ -671,7 +693,7 @@ void SPIDisplay::arm(bool v_sync, uint32_t timeout_us) {
         if (te_pin < 0) {
             gpio_set_dir(dc_pin, GPIO_IN);
         }
-        te_raw_prev = gpio_get(pin) != 0;
+        te_raw_prev = read_te(pin);
     } else {
         last.te_wait_us = 0;
     }
@@ -688,7 +710,7 @@ bool SPIDisplay::poll_te() {
 
     uint32_t now = time_us_32();
     uint pin = te_line();
-    bool level = gpio_get(pin) != 0;
+    bool level = read_te(pin);
 
     // An edge counts only after two agreeing samples, a shared line settling slowly
     bool settled = level == te_raw_prev;
