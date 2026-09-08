@@ -21,12 +21,9 @@
 #include "spidisplay.hpp"
 #include "sram_allocator.hpp"
 
-// The free SRAM the GC never receives, between these linker symbols. C linkage, since
-// spidisplay_bindings.c names the same base for buffer()'s offset form.
-extern "C" {
-extern uint8_t __GcHeapStart[];
-extern uint8_t __GcHeapEnd[];
-}
+// The SRAM the displays may claim, decided by spidisplay_bindings.c, which knows what
+// else the firmware has spoken for. An empty region refuses every claim.
+extern "C" void spidisplay_sram_region(uint8_t **start, uint8_t **end);
 
 namespace spidisplay {
 
@@ -41,7 +38,10 @@ static bool sram_bound = false;
 
 static SRAMAllocator &allocator() {
     if (!sram_bound) {
-        sram.init(__GcHeapStart, __GcHeapEnd);
+        uint8_t *start = nullptr;
+        uint8_t *end = nullptr;
+        spidisplay_sram_region(&start, &end);
+        sram.init(start, end);
         sram_bound = true;
     }
     return sram;
@@ -1051,6 +1051,18 @@ extern "C" {
 #include "py/runtime.h"
 
 // Plain C entry points for spidisplay_bindings.c, which cannot see C++ types
+
+// The bindings took a new region, so the next claim binds the allocator to it
+void spidisplay_sram_rebind(void) {
+    spidisplay::sram_bound = false;
+}
+
+// Whether an address lies in the PSRAM window, which no region may come from
+bool spidisplay_in_psram(const void *p) {
+    uintptr_t addr = (uintptr_t)p;
+    return addr >= spidisplay::PSRAM_CACHED_BASE
+        && addr < spidisplay::PSRAM_CACHED_BASE + spidisplay::PSRAM_WINDOW;
+}
 
 // What the module's buffer() and buffer_size() can offer, the span between the
 // canvas claims and the display claims

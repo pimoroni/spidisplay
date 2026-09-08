@@ -189,11 +189,26 @@ static mp_obj_t SPIDisplay_make_new(const mp_obj_type_t *type, size_t n_args,
 
     // Check if the workspace claim failed
     if (!self->display.has_sram()) {
+        // Check if there was no region to claim from, which no released screen can mend
+        switch (spidisplay_sram_source()) {
+            case SPIDISPLAY_REGION_HEAP_IN_PSRAM:
+                mp_raise_msg(&mp_type_ValueError,
+                    MP_ERROR_TEXT("the heap could only spare PSRAM for the display region. "
+                                  "Build with MICROPY_GC_SPLIT_HEAP set to 0, so the heap lives in PSRAM "
+                                  "and the SRAM is free"));
+            case SPIDISPLAY_REGION_HEAP_FAILED:
+                mp_raise_msg_varg(&mp_type_ValueError,
+                    MP_ERROR_TEXT("could not take %u bytes from the heap for the display region. "
+                                  "Free memory, or call spidisplay.reserve() with less before the first screen"),
+                    (unsigned)spidisplay_heap_reserve_bytes());
+            default:
+                break;
+        }
         // Both sides of the shortfall, since only the caller can free the difference
         mp_raise_msg_varg(&mp_type_ValueError,
-            MP_ERROR_TEXT("display workspace needs %u bytes but only %u are free;"
-                          " release old screens and collect them"
-                          " or reduce band_lines/cache_columns"),
+            MP_ERROR_TEXT("display workspace needs %u bytes but only %u are free; "
+                          "release old screens and collect them "
+                          "or reduce band_lines/cache_columns"),
             (unsigned)self->display.sram_bytes(),
             (unsigned)spidisplay_sram_available());
     }
