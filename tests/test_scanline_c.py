@@ -5,6 +5,11 @@ If SPIDISPLAY_TEST_LIB points at a prebuilt shared library it is used directly.
 Otherwise, when a C++ compiler is available, scanline_host.cpp is compiled on
 the fly and driven through ctypes. With no library and no compiler the test
 skips, so the suite stays runnable everywhere.
+
+The kernel reads the direct source picovector was built for, chosen at compile
+time by PV_PIXEL_FORMAT, so the harness is built once per format: the RGBA8888
+build serves most tests, and the RGBA4444 tests at the end build the other,
+SPIDISPLAY_TEST_LIB_RGBA4444 naming a prebuilt one.
 """
 
 import ctypes
@@ -37,10 +42,15 @@ def _reduced(rgb, fmt):
     return reference.unpack(reference.pack([[rgb, rgb]], 2, 1, fmt), 2, 1, fmt)[0][0]
 
 
-@functools.lru_cache(maxsize=1)
-def _load_library():
-    """Return the ctypes handle to the kernel, or skip if it cannot be built."""
-    path = os.environ.get("SPIDISPLAY_TEST_LIB")
+@functools.lru_cache(maxsize=2)
+def _load_library(pixel_format=1):
+    """Return the ctypes handle to the kernel, or skip if it cannot be built.
+
+    pixel_format is picovector's PV_PIXEL_FORMAT, 1 for RGBA8888 and 2 for
+    RGBA4444, and the handle carries the direct source's width as pixel_bytes.
+    """
+    env = "SPIDISPLAY_TEST_LIB" if pixel_format == 1 else "SPIDISPLAY_TEST_LIB_RGBA4444"
+    path = os.environ.get(env)
     if not path:
         compiler = (os.environ.get("CXX") or shutil.which("c++")
                     or shutil.which("g++") or shutil.which("clang++"))
@@ -50,6 +60,7 @@ def _load_library():
         path = os.path.join(out_dir, "scanline.so")
         subprocess.run(
             [compiler, "-shared", "-fPIC", "-O2", "-std=c++17",
+             f"-DPV_PIXEL_FORMAT={pixel_format}",
              "-I", _INCLUDE, "-o", path, _SOURCE],
             check=True,
         )
@@ -64,11 +75,12 @@ def _load_library():
         ctypes.c_int,  # fmt
         ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,  # centred_x, off_x, centred_y, off_y
         ctypes.c_int, ctypes.c_int,  # tile_x, tile_y
-        ctypes.POINTER(ctypes.c_uint8),  # palette, NULL for an RGBA8888 source
+        ctypes.POINTER(ctypes.c_uint8),  # palette, NULL for a direct source
         ctypes.c_int,  # palette_len
     ]
 
     lib = ctypes.CDLL(path)
+    lib.pixel_bytes = 2 if pixel_format == 2 else 4
     lib.scanline_convert.restype = None
     lib.scanline_convert.argtypes = common_args
     lib.scanline_convert_cached.restype = None
@@ -91,8 +103,9 @@ def _c_convert(lib, src, src_w, src_h, dst_w, dst_h, rotation, mirror, double, b
 
     bands is a (band_lines, cache_columns) pair; capacity is the cache storage in
     bytes, modelling the per-display claim. stride is the source pitch in bytes,
-    defaulting to contiguous. palette holds up to 256 RGBA words and makes src
-    one index byte per pixel. split halves each row range the cache emits, as the
+    defaulting to contiguous. src is direct pixels at the width lib was built
+    for, or, with palette holding up to 256 RGBA words, one index byte per
+    pixel. split halves each row range the cache emits, as the
     firmware does to convert on both cores; slow says the source is reached over
     XIP, which decides both whether the cache engages and whether rows read from
     the source itself may be split. Both only apply to the banded path. tile is
@@ -105,7 +118,7 @@ def _c_convert(lib, src, src_w, src_h, dst_w, dst_h, rotation, mirror, double, b
     ox, oy = (None, None) if offset is None else offset
     if not isinstance(tile, (tuple, list)):
         tile = (tile, tile)
-    src_bytes = 4 if palette is None else 1
+    src_bytes = lib.pixel_bytes if palette is None else 1
     pal = None if palette is None else (ctypes.c_uint8 * len(palette)).from_buffer_copy(palette)
     args = (out, buf, src_w, src_h, src_w * src_bytes if stride is None else stride,
             dst_w, dst_h,
@@ -735,3 +748,138 @@ def test_cached_tiled_capacity_fallback():
                                   False, False, _BG, 565, offset=(-7, 5),
                                   bands=(16, 16), capacity=64, tile=tile)
             assert got == ref, (rotation, tile)
+
+
+# The RGBA4444 build. Its loader expands each nibble by 17, so a source converts
+# as its RGBA8888 expansion would, and the tests below hold it to that through
+# the reference, through the RGBA8888 build, and through the palette path, which
+# the format does not touch.
+
+def _rgba4444_source(src_w, src_h):
+    """A 4444 source whose two bytes a pixel run through every nibble."""
+    return bytes(((i * 53 + 7) & 0xff) for i in range(src_w * src_h * 2))
+
+
+def test_rgba4444_matches_reference():
+    lib = _load_library(pixel_format=2)
+    for src_w, src_h, dst_w, dst_h in _SIZES:
+        src = _rgba4444_source(src_w, src_h)
+        for rotation in _ROTATIONS:
+            for mirror in (False, True):
+                for double in (False, True):
+                    for fmt in _FORMATS:
+                        ref = reference.convert(
+                            src, src_w, src_h, dst_w, dst_h,
+                            rotation=rotation, mirror=mirror, double=double,
+                            bg=_BG, fmt=fmt, src_format=4444,
+                        )
+                        got = _c_convert(
+                            lib, src, src_w, src_h, dst_w, dst_h,
+                            rotation, mirror, double, _BG, fmt,
+                        )
+                        assert got == ref, (src_w, src_h, dst_w, dst_h,
+                                            rotation, mirror, double, fmt)
+
+
+def test_rgba4444_matches_expanded_rgba8888():
+    # The two builds agree: a 4444 source through one is its expansion through
+    # the other, so every geometry the RGBA8888 tests cover carries across.
+    lib4444 = _load_library(pixel_format=2)
+    lib8888 = _load_library()
+    offsets = ((None, None), (2, 1), (-3, -3), (None, 2))
+    for src_w, src_h, dst_w, dst_h in _SIZES:
+        src = _rgba4444_source(src_w, src_h)
+        expanded = reference.expand_rgba4444(src)
+        for rotation in _ROTATIONS:
+            for offset in offsets:
+                for tile in (False, True, reference.MIRROR):
+                    for fmt in _FORMATS:
+                        got = _c_convert(lib4444, src, src_w, src_h, dst_w, dst_h,
+                                         rotation, False, False, _BG, fmt,
+                                         offset=offset, tile=tile)
+                        want = _c_convert(lib8888, expanded, src_w, src_h, dst_w, dst_h,
+                                          rotation, False, False, _BG, fmt,
+                                          offset=offset, tile=tile)
+                        assert got == want, (src_w, src_h, rotation, offset, tile, fmt)
+
+
+def test_rgba4444_matches_reference_strided():
+    # Cells of a wider strip at two bytes a pixel, the pitch the binding checks
+    # against the compiled width.
+    lib = _load_library(pixel_format=2)
+    strip_w, cell_h = 40, 12
+    strip = _rgba4444_source(strip_w, cell_h)
+    stride = strip_w * 2
+    for cell_x, cell_w in ((0, 13), (13, 13), (27, 13), (9, 8)):
+        src = strip[cell_x * 2:]
+        for rotation in _ROTATIONS:
+            for double in (False, True):
+                for fmt in _FORMATS:
+                    ref = reference.convert(src, cell_w, cell_h, 16, 12,
+                                            rotation=rotation, double=double,
+                                            bg=_BG, fmt=fmt, stride=stride,
+                                            src_format=4444)
+                    got = _c_convert(lib, src, cell_w, cell_h, 16, 12,
+                                     rotation, False, double, _BG, fmt, stride=stride)
+                    assert got == ref, (cell_x, cell_w, rotation, double, fmt)
+
+
+def test_rgba4444_cached_matches_reference():
+    # The column cache sizes its windows from the descriptor's pixel width, so
+    # at two bytes a window holds twice the columns for the same claim.
+    lib = _load_library(pixel_format=2)
+    sizes = ((100, 140, 64, 96), (48, 72, 64, 96), (17, 9, 64, 96), (5, 5, 64, 96))
+    for src_w, src_h, dst_w, dst_h in sizes:
+        src = _rgba4444_source(src_w, src_h)
+        for rotation in _ROTATIONS:
+            for double in (False, True):
+                for fmt in _FORMATS:
+                    ref = reference.convert(src, src_w, src_h, dst_w, dst_h,
+                                            rotation=rotation, double=double,
+                                            bg=_BG, fmt=fmt, src_format=4444)
+                    for bands in ((16, 16), (16, 4), (5, 16), (1, 16), (16, 0), (16, 1)):
+                        got = _split_variants(lib, src, src_w, src_h, dst_w, dst_h,
+                                              rotation, False, double, _BG, fmt,
+                                              bands=bands)
+                        assert got == ref, (src_w, src_h, rotation, double, fmt, bands)
+
+
+def test_rgba4444_through_rgb444_is_exact():
+    # RGB444 keeps the top nibble of each expanded channel, which is the stored
+    # nibble again, so every one of the 4096 colours reaches the panel unchanged.
+    lib = _load_library(pixel_format=2)
+    src_w, src_h = 64, 64
+    src = bytearray()
+    for colour in range(4096):
+        r, g, b = colour & 0xf, (colour >> 4) & 0xf, colour >> 8
+        src += bytes(((g << 4) | r, (0xf << 4) | b))
+    got = _c_convert(lib, bytes(src), src_w, src_h, src_w, src_h,
+                     0, False, False, _BG, 444)
+    expected = bytearray()
+    for colour in range(0, 4096, 2):
+        r0, g0, b0 = colour & 0xf, (colour >> 4) & 0xf, colour >> 8
+        r1, g1, b1 = (colour + 1) & 0xf, ((colour + 1) >> 4) & 0xf, (colour + 1) >> 8
+        expected += bytes(((r0 << 4) | g0, (b0 << 4) | r1, (g1 << 4) | b1))
+    assert got == bytes(expected)
+
+
+def test_rgba4444_build_indexed_matches_reference():
+    # The palette stays RGBA8888 words in either build, so an indexed source
+    # converts identically through both and through the reference.
+    lib4444 = _load_library(pixel_format=2)
+    lib8888 = _load_library()
+    for src_w, src_h, dst_w, dst_h in ((6, 4, 8, 6), (5, 3, 8, 4), (7, 5, 6, 4)):
+        idx = bytes(((i * 29 + 3) & 0xff) for i in range(src_w * src_h))
+        for rotation in _ROTATIONS:
+            for double in (False, True):
+                for fmt in _FORMATS:
+                    ref = reference.convert(idx, src_w, src_h, dst_w, dst_h,
+                                            rotation=rotation, double=double,
+                                            bg=_BG, fmt=fmt, palette=_PALETTE_ALPHA)
+                    got = _c_convert(lib4444, idx, src_w, src_h, dst_w, dst_h,
+                                     rotation, False, double, _BG, fmt,
+                                     palette=_PALETTE_ALPHA)
+                    same = _c_convert(lib8888, idx, src_w, src_h, dst_w, dst_h,
+                                      rotation, False, double, _BG, fmt,
+                                      palette=_PALETTE_ALPHA)
+                    assert got == ref == same, (src_w, src_h, rotation, double, fmt)

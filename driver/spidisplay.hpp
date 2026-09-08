@@ -261,9 +261,9 @@ public:
     void command(const uint8_t *cmd, size_t cmd_len,
                  const uint8_t *data, size_t data_len);
 
-    // Convert and stream a whole frame, blocking until it has left. src is RGBA8888, or
-    // one palette index per pixel with palette set, whose table is composited over the
-    // background into the display's own SRAM before this returns.
+    // Convert and stream a whole frame, blocking until it has left. src is DirectSource
+    // pixels, or one palette index per pixel with palette set, whose table is composited
+    // over the background into the display's own SRAM before this returns.
     //
     // Each axis is centred or placed by its offset, and tiling wraps the read at the
     // source's size, so any offset is valid. mirror flips the whole output, while

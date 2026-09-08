@@ -610,7 +610,7 @@ void SPIDisplay::prepare(const uint8_t *src, int src_w, int src_h, int src_strid
                            centred_x, off_x, centred_y, off_y,
                            tile_x, tile_y, tile_mirror_x, tile_mirror_y, bg,
                            src_stride,
-                           indexed ? Indexed8::bytes : RGBA8888::bytes);
+                           indexed ? Indexed8::bytes : DirectSource::bytes);
 
     // Built every frame, since a caller may assign entries in place and a cached copy
     // would go stale silently. Compositing here makes transparency free per pixel.

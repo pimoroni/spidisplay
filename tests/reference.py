@@ -1,6 +1,6 @@
 """
-Reference RGBA8888 -> RGB444 / RGB565 conversion, the byte-exact semantics the C
-scanline kernel must reproduce.
+Reference RGBA8888 or RGBA4444 -> RGB444 / RGB565 conversion, the byte-exact
+semantics the C scanline kernel must reproduce.
 
 It favours clarity over speed: it gathers the source into the full destination
 pixel grid, then packs it. The kernel scatters per scanline for speed and must
@@ -46,10 +46,28 @@ def _composite_palette(palette, bg_px):
 # every seam is a reflection. False and True remain the other two.
 MIRROR = 2
 
+# The direct source formats, named by their bit layout as fmt names the packers.
+# RGBA4444 is picovector's little-endian 16-bit word: R in bits 0-3, G in 4-7, B in
+# 8-11 and A in 12-15, so byte 0 is G:R and byte 1 is A:B.
+_SRC_BYTES = {8888: 4, 4444: 2}
+
+
+def expand_rgba4444(src):
+    """RGBA4444 bytes as the RGBA8888 bytes the kernel's loader sees them as.
+
+    Each nibble is scaled by 17, taking 0 to 0 and 15 to 255, the expansion
+    picovector's pv_expand4444 applies before any blend.
+    """
+    out = bytearray()
+    for i in range(0, len(src), 2):
+        lo, hi = src[i], src[i + 1]
+        out += bytes(((lo & 0x0f) * 17, (lo >> 4) * 17, (hi & 0x0f) * 17, (hi >> 4) * 17))
+    return bytes(out)
+
 
 def sample_grid(src, src_w, src_h, dst_w, dst_h, rotation=0, mirror=False,
                 double=False, offset=None, tile=False, bg=0, stride=None,
-                palette=None):
+                palette=None, src_format=8888):
     """Gather the source into a dst_h x dst_w grid of (r, g, b) tuples.
 
     Placement model: the source is composed at its offset in an upright canvas
@@ -58,11 +76,12 @@ def sample_grid(src, src_w, src_h, dst_w, dst_h, rotation=0, mirror=False,
     the origin corner and the offset rotate/flip with the image, as if a person
     physically rotated or flipped the panel.
 
-    src is RGBA8888 bytes (4 bytes per pixel), or one palette index per pixel
-    when palette holds RGBA words, colour premultiplied by alpha as picovector
-    stores it. bg is a 0xBBGGRR integer, which the pixels the source does not
-    cover take, and which a palette entry's alpha composites over; an RGBA
-    pixel's alpha byte is ignored. offset is None (centre both axes)
+    src is direct pixels in src_format, RGBA8888 (4 bytes per pixel) or RGBA4444
+    (2 bytes), or one palette index per pixel when palette holds RGBA8888 words,
+    colour premultiplied by alpha as picovector stores it. bg is a 0xBBGGRR
+    integer, which the pixels the source does not cover take, and which a
+    palette entry's alpha composites over; a direct pixel's alpha is ignored.
+    offset is None (centre both axes)
     or (x, y) in the upright canvas, where either element may be None to centre
     just that axis. stride is the source pitch in bytes, None meaning contiguous.
     tile is one value for both source axes or an (x, y) pair of them: a tiled
@@ -77,7 +96,7 @@ def sample_grid(src, src_w, src_h, dst_w, dst_h, rotation=0, mirror=False,
         tile = (tile, tile)
     tile_x, tile_y = tile
 
-    src_bytes = 4 if palette is None else 1
+    src_bytes = _SRC_BYTES[src_format] if palette is None else 1
     if stride is None:
         stride = src_w * src_bytes
     scale = 2 if double else 1
@@ -129,8 +148,12 @@ def sample_grid(src, src_w, src_h, dst_w, dst_h, rotation=0, mirror=False,
                 si = (v // scale) * stride + (u // scale) * src_bytes
                 if table is not None:
                     grid[dst_y][dst_x] = table[src[si]]
+                elif src_bytes == 2:
+                    lo, hi = src[si], src[si + 1]
+                    grid[dst_y][dst_x] = ((lo & 0x0f) * 17, (lo >> 4) * 17,
+                                          (hi & 0x0f) * 17)
                 else:
-                    # An RGBA source's alpha byte is ignored, see scanline.hpp
+                    # A direct source's alpha is ignored, see pixel_formats.hpp
                     grid[dst_y][dst_x] = (src[si], src[si + 1], src[si + 2])
 
     return grid
@@ -176,10 +199,10 @@ def _pack_rgb565(grid, dst_w, dst_h):
 
 def convert(src, src_w, src_h, dst_w, dst_h, rotation=0, mirror=False,
             double=False, offset=None, tile=False, bg=0, fmt=444, stride=None,
-            palette=None):
-    """Convert RGBA8888 or palette-indexed source bytes into packed panel bytes."""
+            palette=None, src_format=8888):
+    """Convert direct or palette-indexed source bytes into packed panel bytes."""
     grid = sample_grid(src, src_w, src_h, dst_w, dst_h, rotation, mirror,
-                       double, offset, tile, bg, stride, palette)
+                       double, offset, tile, bg, stride, palette, src_format)
     return pack(grid, dst_w, dst_h, fmt)
 
 

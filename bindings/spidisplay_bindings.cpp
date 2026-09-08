@@ -19,6 +19,9 @@ extern "C" {
 
 #include "spidisplay_bindings.h"
 
+static_assert(spidisplay::DirectSource::bytes == SPIDISPLAY_PIXEL_BYTES,
+              "PIXEL_BYTES has to be the width the kernels read");
+
 typedef struct _SPIDisplayBus_obj_t {
     mp_obj_base_t base;
     spidisplay::SPIDisplayBus bus;
@@ -337,7 +340,8 @@ static void SPIDisplay_parse_frame(size_t n_args, const mp_obj_t *pos_args,
     if (src_w < 1 || src_h < 1) {
         mp_raise_ValueError(MP_ERROR_TEXT("image width and height must be positive"));
     }
-    // A palettised source is one index byte per pixel, its table taken by reference
+    // A palettised source is one index byte per pixel, its table taken by reference.
+    // Anything else is read as DirectSource pixels, whatever object holds the buffer.
     mp_obj_t palette_obj = mp_load_attr(args[ARG_image].u_obj, MP_QSTR_palette);
     const uint8_t *palette = NULL;
     size_t palette_len = 0;
@@ -348,7 +352,7 @@ static void SPIDisplay_parse_frame(size_t n_args, const mp_obj_t *pos_args,
         palette_len = pbuf.len;
     }
     int px_bytes = palette != NULL ? spidisplay::Indexed8::bytes
-                                   : spidisplay::RGBA8888::bytes;
+                                   : spidisplay::DirectSource::bytes;
 
     if (src_stride < src_w * px_bytes) {
         mp_raise_ValueError(MP_ERROR_TEXT("image stride is narrower than its width"));

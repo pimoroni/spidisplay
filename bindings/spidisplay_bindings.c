@@ -170,6 +170,7 @@ static const mp_rom_map_elem_t spidisplay_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_dual_convert), MP_ROM_PTR(&spidisplay_dual_convert_obj) },
     { MP_ROM_QSTR(MP_QSTR_update_all), MP_ROM_PTR(&spidisplay_update_all_obj) },
     { MP_ROM_QSTR(MP_QSTR_te_phase), MP_ROM_PTR(&spidisplay_te_phase_obj) },
+    { MP_ROM_QSTR(MP_QSTR_PIXEL_BYTES), MP_ROM_INT(SPIDISPLAY_PIXEL_BYTES) },
 };
 static MP_DEFINE_CONST_DICT(spidisplay_globals, spidisplay_globals_table);
 

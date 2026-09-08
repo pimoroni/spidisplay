@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: MIT
 //
 // Converts the pixels a frame was drawn in into the packed rows a panel accepts,
-// RGBA8888 or palette indices as inputs and RGB444 or RGB565 as outputs.
+// the direct format picovector was built with or palette indices as inputs and RGB444
+// or RGB565 as outputs.
 //
 // This conversion has to keep up with the wire, so a frame's placement is calculated
 // once into a Descriptor and reduced to an affine map. The inner loop then only walks
@@ -475,10 +476,10 @@ using ConvertFn = void (*)(const Descriptor &, uint8_t *, int, int);
 inline ConvertFn select_convert(int dst_format, bool indexed) {
     if (dst_format == RGB444::format) {
         return indexed ? &convert_band<Indexed8, RGB444>
-                       : &convert_band<RGBA8888, RGB444>;
+                       : &convert_band<DirectSource, RGB444>;
     }
     return indexed ? &convert_band<Indexed8, RGB565>
-                   : &convert_band<RGBA8888, RGB565>;
+                   : &convert_band<DirectSource, RGB565>;
 }
 
 // Whether a conversion is halved across both cores. The module's dual_convert()

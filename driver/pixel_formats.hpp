@@ -11,6 +11,11 @@
 // be composited ahead of that loop, so an RGBA source's alpha is ignored and its
 // colour taken as premultiplied. Blending every pixel was measured to roughly double
 // a panel-sized frame's conversion, so it no longer keeps up with the wire.
+//
+// The direct source is the format picovector stores its framebuffer in, which its
+// PV_PIXEL_FORMAT setting fixes for a whole build: 1 for RGBA8888, 2 for RGBA4444. The
+// same value selects DirectSource here, so the two can never read a buffer at different
+// widths, and the build only holds the kernels for the format it will meet.
 
 #pragma once
 
@@ -18,6 +23,13 @@
 #include <cstring>
 
 #include "descriptor.hpp"
+
+#ifndef PV_PIXEL_FORMAT
+#define PV_PIXEL_FORMAT 1
+#endif
+#if PV_PIXEL_FORMAT != 1 && PV_PIXEL_FORMAT != 2
+#error "PV_PIXEL_FORMAT must be 1 (RGBA8888) or 2 (RGBA4444)"
+#endif
 
 namespace spidisplay {
 
@@ -35,6 +47,31 @@ struct RGBA8888 {
         }
     };
 };
+
+// A direct source of little-endian 16-bit words, R in bits 0-3, G in 4-7, B in 8-11 and
+// A in 12-15, so byte 0 is G:R and byte 1 is A:B. Each nibble is expanded by 17, taking 0
+// to 0 and 15 to 255 as picovector does. RGB444::pack2 keeps the top nibble of a
+// channel, which is the stored nibble again, so this source reaches a 12-bit panel exactly.
+struct RGBA4444 {
+    static constexpr int bytes = 2;
+
+    struct Loader {
+        explicit Loader(const Descriptor &) {}
+
+        inline void load(const uint8_t *p, uint8_t &r, uint8_t &g, uint8_t &b) const {
+            r = (uint8_t)((p[0] & 0x0f) * 17);
+            g = (uint8_t)((p[0] >> 4) * 17);
+            b = (uint8_t)((p[1] & 0x0f) * 17);
+        }
+    };
+};
+
+// The direct source this build reads, chosen by PV_PIXEL_FORMAT
+#if PV_PIXEL_FORMAT == 2
+using DirectSource = RGBA4444;
+#else
+using DirectSource = RGBA8888;
+#endif
 
 // An indexed source, its Loader reading a colour table of RGBA words
 struct Indexed8 {

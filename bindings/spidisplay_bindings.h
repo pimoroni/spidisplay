@@ -38,6 +38,15 @@ extern size_t spidisplay_sram_headroom(void);
 extern long long spidisplay_sram_claim_low(size_t bytes);
 extern void spidisplay_sram_release_low(void);
 
+/***** The direct source width, for sizing a canvas from Python. picovector fixes its
+       framebuffer format per build and spidisplay reads it through the same setting,
+       so the value is that setting and spidisplay_bindings.cpp checks it against the
+       driver's trait *****/
+#ifndef PV_PIXEL_FORMAT
+#define PV_PIXEL_FORMAT 1
+#endif
+#define SPIDISPLAY_PIXEL_BYTES (PV_PIXEL_FORMAT == 2 ? 2 : 4)
+
 /***** The dual-core conversion setting *****/
 extern int spidisplay_dual_convert(void);
 extern void spidisplay_set_dual_convert(int enable);

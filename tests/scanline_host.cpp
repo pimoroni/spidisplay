@@ -35,7 +35,7 @@ extern "C" void scanline_convert(uint8_t *out, const uint8_t *src,
                                    tile_x != 0, tile_y != 0,
                                    tile_x == 2, tile_y == 2, bg,
                                    src_stride,
-                                   indexed ? Indexed8::bytes : RGBA8888::bytes);
+                                   indexed ? Indexed8::bytes : DirectSource::bytes);
     // Through the same table preparation the firmware's prepare() uses, so the
     // clamp, the zero-filled tail and the composite are all under test.
     uint8_t table[PALETTE_BYTES];
@@ -82,7 +82,7 @@ extern "C" void scanline_convert_cached(uint8_t *out, const uint8_t *src,
                                    tile_x != 0, tile_y != 0,
                                    tile_x == 2, tile_y == 2, bg,
                                    src_stride,
-                                   indexed ? Indexed8::bytes : RGBA8888::bytes);
+                                   indexed ? Indexed8::bytes : DirectSource::bytes);
     uint8_t table[PALETTE_BYTES];
     if (indexed) {
         prepare_palette(table, palette, (size_t)palette_len, d.bg_r, d.bg_g, d.bg_b);

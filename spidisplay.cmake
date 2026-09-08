@@ -40,4 +40,13 @@ if(PV_DUAL_CORE)
     target_compile_definitions(usermod_spidisplay INTERFACE SPIDISPLAY_PV_CORE1=1)
 endif()
 
+# The framebuffer format picovector is built for, 1 for RGBA8888 (the default) or 2 for
+# RGBA4444. The consumer sets it once before both find_package calls, so the two
+# libraries read the same width.
+if(DEFINED PV_PIXEL_FORMAT)
+    target_compile_definitions(usermod_spidisplay INTERFACE
+        PV_PIXEL_FORMAT=${PV_PIXEL_FORMAT}
+    )
+endif()
+
 target_link_libraries(usermod INTERFACE usermod_spidisplay)
