@@ -54,7 +54,7 @@ extern "C" void scanline_convert(uint8_t *out, const uint8_t *src,
 
 // Banded conversion through the column cache, matching the firmware's band loop
 // (spidisplay.cpp) minus the SPI/DMA. cache_capacity is in bytes and models the
-// per-display claim (cache_columns * dst_w * 4 in firmware); passing less than
+// per-display claim (cache_columns * dst_w * DirectSource::bytes in firmware); less than
 // a window needs exercises the same per-window fallback.
 //
 // split is the firmware's dual_convert setting: on, each row range the cache

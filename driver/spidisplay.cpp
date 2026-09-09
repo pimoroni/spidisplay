@@ -229,10 +229,11 @@ SPIDisplay::SPIDisplay(SPIDisplayBus *bus, uint cs, uint dc, int te, uint8_t ram
     // The band ring, the cache scratch, then the palette, one claim. Rounding
     // the band to 4 keeps every slot and the cache word-aligned. The cache is
     // sized by width, a window caching up to dst_w source rows of its columns
-    // (column_cache.hpp), so height would under-provision a landscape panel.
+    // (column_cache.hpp), so height would under-provision a landscape panel, and
+    // at the direct source's pixel width, the widest source it can be handed.
     full_row_bytes = packed_row_bytes(fmt, dst_w);
     band_bytes = (rows_per_band * full_row_bytes + 3) & ~(size_t)3;
-    cache_capacity = this->cache_columns * dst_w * 4;
+    cache_capacity = this->cache_columns * dst_w * DirectSource::bytes;
     sram_claim_bytes = (size_t)slot_count * band_bytes + (size_t)cache_capacity
                      + PALETTE_BYTES;
     sram_claim = allocator().claim_high(sram_claim_bytes);

@@ -94,7 +94,7 @@ def _load_library(pixel_format=1):
 
 
 # The capacity the firmware's fixed statics used to give the cache, in bytes;
-# tests that model a per-display claim pass cache_columns * dst_w * 4 instead.
+# tests that model a per-display claim pass cache_columns * dst_w * pixel bytes instead.
 _DEFAULT_CAPACITY = 240 * 16 * 4
 
 
