@@ -157,6 +157,17 @@ static mp_obj_t spidisplay_dual_convert_obj_fn(size_t n_args, const mp_obj_t *ar
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(spidisplay_dual_convert_obj, 0, 1, spidisplay_dual_convert_obj_fn);
 
+// The panel depths this build converts to, 12 first as the one every build has
+#if SPIDISPLAY_HAS_RGB565
+static const mp_rom_obj_tuple_t spidisplay_bitdepths_obj = {
+    {&mp_type_tuple}, 2, { MP_ROM_INT(12), MP_ROM_INT(16) }
+};
+#else
+static const mp_rom_obj_tuple_t spidisplay_bitdepths_obj = {
+    {&mp_type_tuple}, 1, { MP_ROM_INT(12) }
+};
+#endif
+
 /***** Module *****/
 static const mp_rom_map_elem_t spidisplay_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_spidisplay) },
@@ -171,6 +182,7 @@ static const mp_rom_map_elem_t spidisplay_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_update_all), MP_ROM_PTR(&spidisplay_update_all_obj) },
     { MP_ROM_QSTR(MP_QSTR_te_phase), MP_ROM_PTR(&spidisplay_te_phase_obj) },
     { MP_ROM_QSTR(MP_QSTR_PIXEL_BYTES), MP_ROM_INT(SPIDISPLAY_PIXEL_BYTES) },
+    { MP_ROM_QSTR(MP_QSTR_BITDEPTHS), MP_ROM_PTR(&spidisplay_bitdepths_obj) },
 };
 static MP_DEFINE_CONST_DICT(spidisplay_globals, spidisplay_globals_table);
 

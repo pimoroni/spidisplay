@@ -19,6 +19,11 @@
 
 using namespace spidisplay;
 
+// The packer tag the build gives a panel depth, 0 where it has none
+extern "C" int scanline_format_for_bitdepth(int bitdepth) {
+    return format_for_bitdepth(bitdepth);
+}
+
 extern "C" void scanline_convert(uint8_t *out, const uint8_t *src,
                                  int src_w, int src_h, int src_stride,
                                  int dst_w, int dst_h,

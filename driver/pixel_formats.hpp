@@ -158,8 +158,8 @@ inline uint8_t *fill_bg_pairs(uint8_t *dst_ptr, int pixels, const uint8_t *bg_pa
     return dst_ptr;
 }
 
-// Destination packers. format tags a packer and bitdepth the panel depth it serves,
-// and a tag neither packer owns is treated as RGB565.
+// Destination packers. format tags a packer and bitdepth the panel depth it serves, and
+// a tag neither packer owns is treated as RGB565, or as RGB444 where that is the only one.
 
 // Two pixels packed into three bytes
 struct RGB444 {
@@ -178,7 +178,9 @@ struct RGB444 {
     }
 };
 
-// One pixel packed into two big-endian bytes
+// One pixel packed into two big-endian bytes. An RGBA4444 source has four bits a channel,
+// so this would carry the same colour in a third more bytes, and that build leaves it out.
+#if PV_PIXEL_FORMAT != 2
 struct RGB565 {
     static constexpr int format = 565;
     static constexpr int bitdepth = 16;
@@ -192,28 +194,43 @@ struct RGB565 {
         memcpy(out, &value, 2);
     }
 };
+#endif
 
-// The packer tag for a panel bit depth, 0 where no packer exists for it
-inline int format_for_bitdepth(int bitdepth) {
+// The packer tag for a panel bit depth, 0 where this build has no packer for it
+constexpr int format_for_bitdepth(int bitdepth) {
     if (bitdepth == RGB444::bitdepth) {
         return RGB444::format;
     }
+#if PV_PIXEL_FORMAT != 2
     if (bitdepth == RGB565::bitdepth) {
         return RGB565::format;
     }
+#endif
     return 0;
 }
 
 // Pixels a row width has to be a multiple of, so a packed row ends on a whole group
 inline int pixels_per_group(int format) {
-    return format == RGB444::format ? RGB444::group_pixels : RGB565::group_pixels;
+#if PV_PIXEL_FORMAT != 2
+    if (format != RGB444::format) {
+        return RGB565::group_pixels;
+    }
+#else
+    (void)format;
+#endif
+    return RGB444::group_pixels;
 }
 
 // One packed destination row's bytes, a part group at the end of a width being lost
 inline int packed_row_bytes(int format, int dst_w) {
-    return format == RGB444::format
-        ? dst_w / RGB444::group_pixels * RGB444::group_bytes
-        : dst_w / RGB565::group_pixels * RGB565::group_bytes;
+#if PV_PIXEL_FORMAT != 2
+    if (format != RGB444::format) {
+        return dst_w / RGB565::group_pixels * RGB565::group_bytes;
+    }
+#else
+    (void)format;
+#endif
+    return dst_w / RGB444::group_pixels * RGB444::group_bytes;
 }
 
 }  // namespace spidisplay

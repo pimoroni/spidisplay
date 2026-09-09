@@ -19,6 +19,8 @@ extern "C" {
 
 #include "spidisplay_bindings.h"
 
+static_assert((spidisplay::format_for_bitdepth(16) != 0) == (SPIDISPLAY_HAS_RGB565 != 0),
+              "the depths the module lists have to be the ones the kernels convert to");
 static_assert(spidisplay::DirectSource::bytes == SPIDISPLAY_PIXEL_BYTES,
               "PIXEL_BYTES has to be the width the kernels read");
 
@@ -138,7 +140,7 @@ static mp_obj_t SPIDisplay_make_new(const mp_obj_type_t *type, size_t n_args,
         { MP_QSTR_te_on, MP_ARG_INT, {.u_int = 0x35} },
         { MP_QSTR_te_off, MP_ARG_INT, {.u_int = 0x34} },
         { MP_QSTR_te_mode, MP_ARG_INT, {.u_int = 0x00} },
-        { MP_QSTR_bitdepth, MP_ARG_INT, {.u_int = 16} },
+        { MP_QSTR_bitdepth, MP_ARG_INT, {.u_int = SPIDISPLAY_DEFAULT_BITDEPTH} },
         { MP_QSTR_baudrate, MP_ARG_INT, {.u_int = 24000000} },
         { MP_QSTR_band_lines, MP_ARG_INT, {.u_int = 16} },
         { MP_QSTR_cache_columns, MP_ARG_INT, {.u_int = 16} },
@@ -163,7 +165,11 @@ static mp_obj_t SPIDisplay_make_new(const mp_obj_type_t *type, size_t n_args,
     }
     int format = spidisplay::format_for_bitdepth(args[ARG_bitdepth].u_int);
     if (format == 0) {
+#if SPIDISPLAY_HAS_RGB565
         mp_raise_ValueError(MP_ERROR_TEXT("bitdepth must be 12 or 16"));
+#else
+        mp_raise_ValueError(MP_ERROR_TEXT("bitdepth must be 12: an RGBA4444 source has no more colour than a 12-bit panel shows, so 16-bit is not built"));
+#endif
     }
     if (args[ARG_width].u_int % spidisplay::pixels_per_group(format) != 0) {
         mp_raise_ValueError(MP_ERROR_TEXT("a 12-bit row packs two pixels in three bytes, so width must be even"));

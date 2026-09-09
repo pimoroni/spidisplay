@@ -82,6 +82,8 @@ def _load_library(pixel_format=1):
     lib = ctypes.CDLL(path)
     lib.pixel_bytes = 2 if pixel_format == 2 else 4
     lib.scanline_convert.restype = None
+    lib.scanline_format_for_bitdepth.restype = ctypes.c_int
+    lib.scanline_format_for_bitdepth.argtypes = [ctypes.c_int]
     lib.scanline_convert.argtypes = common_args
     lib.scanline_convert_cached.restype = None
     lib.scanline_convert_cached.argtypes = common_args + [
@@ -753,7 +755,11 @@ def test_cached_tiled_capacity_fallback():
 # The RGBA4444 build. Its loader expands each nibble by 17, so a source converts
 # as its RGBA8888 expansion would, and the tests below hold it to that through
 # the reference, through the RGBA8888 build, and through the palette path, which
-# the format does not touch.
+# the format does not touch. That build converts to RGB444 alone, RGB565 carrying
+# no more of a four-bit channel for a third more bytes, so its packer is left out.
+
+_FORMATS_4444 = (444,)
+
 
 def _rgba4444_source(src_w, src_h):
     """A 4444 source whose two bytes a pixel run through every nibble."""
@@ -767,7 +773,7 @@ def test_rgba4444_matches_reference():
         for rotation in _ROTATIONS:
             for mirror in (False, True):
                 for double in (False, True):
-                    for fmt in _FORMATS:
+                    for fmt in _FORMATS_4444:
                         ref = reference.convert(
                             src, src_w, src_h, dst_w, dst_h,
                             rotation=rotation, mirror=mirror, double=double,
@@ -793,7 +799,7 @@ def test_rgba4444_matches_expanded_rgba8888():
         for rotation in _ROTATIONS:
             for offset in offsets:
                 for tile in (False, True, reference.MIRROR):
-                    for fmt in _FORMATS:
+                    for fmt in _FORMATS_4444:
                         got = _c_convert(lib4444, src, src_w, src_h, dst_w, dst_h,
                                          rotation, False, False, _BG, fmt,
                                          offset=offset, tile=tile)
@@ -814,7 +820,7 @@ def test_rgba4444_matches_reference_strided():
         src = strip[cell_x * 2:]
         for rotation in _ROTATIONS:
             for double in (False, True):
-                for fmt in _FORMATS:
+                for fmt in _FORMATS_4444:
                     ref = reference.convert(src, cell_w, cell_h, 16, 12,
                                             rotation=rotation, double=double,
                                             bg=_BG, fmt=fmt, stride=stride,
@@ -833,7 +839,7 @@ def test_rgba4444_cached_matches_reference():
         src = _rgba4444_source(src_w, src_h)
         for rotation in _ROTATIONS:
             for double in (False, True):
-                for fmt in _FORMATS:
+                for fmt in _FORMATS_4444:
                     ref = reference.convert(src, src_w, src_h, dst_w, dst_h,
                                             rotation=rotation, double=double,
                                             bg=_BG, fmt=fmt, src_format=4444)
@@ -872,7 +878,7 @@ def test_rgba4444_build_indexed_matches_reference():
         idx = bytes(((i * 29 + 3) & 0xff) for i in range(src_w * src_h))
         for rotation in _ROTATIONS:
             for double in (False, True):
-                for fmt in _FORMATS:
+                for fmt in _FORMATS_4444:
                     ref = reference.convert(idx, src_w, src_h, dst_w, dst_h,
                                             rotation=rotation, double=double,
                                             bg=_BG, fmt=fmt, palette=_PALETTE_ALPHA)
@@ -883,3 +889,14 @@ def test_rgba4444_build_indexed_matches_reference():
                                       rotation, False, double, _BG, fmt,
                                       palette=_PALETTE_ALPHA)
                     assert got == ref == same, (src_w, src_h, rotation, double, fmt)
+
+
+def test_rgba4444_build_has_no_rgb565():
+    # The packer for a depth the build left out is refused, which the binding turns
+    # into its bitdepth error, and the RGBA8888 build keeps both
+    lib4444 = _load_library(pixel_format=2)
+    lib8888 = _load_library()
+    assert lib4444.scanline_format_for_bitdepth(12) == 444
+    assert lib4444.scanline_format_for_bitdepth(16) == 0
+    assert lib8888.scanline_format_for_bitdepth(12) == 444
+    assert lib8888.scanline_format_for_bitdepth(16) == 565

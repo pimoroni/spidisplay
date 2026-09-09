@@ -47,6 +47,11 @@ extern void spidisplay_sram_release_low(void);
 #endif
 #define SPIDISPLAY_PIXEL_BYTES (PV_PIXEL_FORMAT == 2 ? 2 : 4)
 
+/***** The panel depths this build converts to. An RGBA4444 source has four bits a
+       channel, so RGB565 is left out of that build and 12 is the only depth *****/
+#define SPIDISPLAY_HAS_RGB565 (PV_PIXEL_FORMAT != 2)
+#define SPIDISPLAY_DEFAULT_BITDEPTH (SPIDISPLAY_HAS_RGB565 ? 16 : 12)
+
 /***** The dual-core conversion setting *****/
 extern int spidisplay_dual_convert(void);
 extern void spidisplay_set_dual_convert(int enable);

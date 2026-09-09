@@ -474,12 +474,18 @@ using ConvertFn = void (*)(const Descriptor &, uint8_t *, int, int);
 // descriptor carries rotation, mirror and pixel-double, so only indexed selects on the
 // source side, since a palette test in the loop body cannot be hoisted out of it.
 inline ConvertFn select_convert(int dst_format, bool indexed) {
-    if (dst_format == RGB444::format) {
-        return indexed ? &convert_band<Indexed8, RGB444>
-                       : &convert_band<DirectSource, RGB444>;
+    // Preprocessed out, not if constexpr: outside a template a discarded branch still
+    // instantiates the kernels it names, and these have to stay out of the build
+#if PV_PIXEL_FORMAT != 2
+    if (dst_format != RGB444::format) {
+        return indexed ? &convert_band<Indexed8, RGB565>
+                       : &convert_band<DirectSource, RGB565>;
     }
-    return indexed ? &convert_band<Indexed8, RGB565>
-                   : &convert_band<DirectSource, RGB565>;
+#else
+    (void)dst_format;
+#endif
+    return indexed ? &convert_band<Indexed8, RGB444>
+                   : &convert_band<DirectSource, RGB444>;
 }
 
 // Whether a conversion is halved across both cores. The module's dual_convert()
