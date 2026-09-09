@@ -355,6 +355,10 @@ public:
     // Abandon a staged or streaming frame, the next full frame recovering the glass
     void abort_frame();
 
+    // Drop the pointers into the last frame's source. MicroPython's GC scans this object
+    // conservatively, so a pointer kept past the frame holds the image after Python drops it.
+    void release_source();
+
     // Kick the next band from the DMA_IRQ_2 handler, allocating nothing and touching no
     // state a thread owns. try_kick() is the same dispatch from the thread instead.
     void kick_from_isr();

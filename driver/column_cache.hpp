@@ -41,6 +41,11 @@ public:
     ColumnCache(uint32_t *storage, int capacity_bytes, int columns)
         : storage(storage), capacity_bytes(capacity_bytes), columns(columns) {}
 
+    // Forget the frame's source, its pointer otherwise outliving the frame here
+    void release_source() {
+        frame_desc.src = nullptr;
+    }
+
     // Set the cache up for one frame, deciding whether it will cache at all and
     // precomputing what every window shares. Caching needs a rotation whose row walk
     // strides by whole source rows, and a source slower than SRAM.

@@ -828,6 +828,12 @@ uint32_t SPIDisplay::deadline_us() const {
     return (uint32_t)(((uint64_t)remaining * word_bits * 1000000u) / achieved_baudrate);
 }
 
+void SPIDisplay::release_source() {
+    desc.src = nullptr;
+    desc.palette = nullptr;
+    cache.release_source();
+}
+
 void SPIDisplay::abort_frame() {
     // Check if there is a frame to abandon
     if (state == FrameState::IDLE) {
@@ -872,6 +878,7 @@ void SPIDisplay::abort_frame() {
     target_dc_mask = 0;
     sync_cs_mask = 0;
     sync_dc_mask = 0;
+    release_source();
     state = FrameState::IDLE;
 }
 
@@ -1048,6 +1055,7 @@ bool SPIDisplay::finish_if_drained() {
     target_dc_mask = 0;
     sync_cs_mask = 0;
     sync_dc_mask = 0;
+    release_source();
     state = FrameState::IDLE;
     return true;
 }
