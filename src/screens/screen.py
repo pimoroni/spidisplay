@@ -58,13 +58,15 @@ class Screen(ScreenBase):
             # Take the firmware's answer, off where there is no second core to convert on
             dual_profiles = spidisplay.dual_convert()
 
+        # Only the depths this firmware converts to, an RGBA4444 build having 12 alone
         if bitdepth is None:
-            for depth in self.DEPTHS:
+            depths = [depth for depth in self.DEPTHS if depth in spidisplay.BITDEPTHS]
+            for depth in depths:
                 if (self.__baudrate, depth) in self.PROFILES:
                     bitdepth = depth
                     break
             else:
-                bitdepth = self.BITDEPTH
+                bitdepth = self.BITDEPTH if self.BITDEPTH in depths else depths[0]
 
         # An off-table wire falls back to the class constants, so a new one can be profiled
         profile = self.PROFILES.get((self.__baudrate, bitdepth))

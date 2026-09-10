@@ -138,7 +138,7 @@ class ScreenBase:
         # Imported where it is needed, so the frame path stands on spidisplay alone
         import picovector
 
-        nbytes = width * height * 4    # RGBA8888
+        nbytes = width * height * spidisplay.PIXEL_BYTES
         if offset is not None:
             return picovector.image(width, height, spidisplay.buffer(nbytes, offset))
 

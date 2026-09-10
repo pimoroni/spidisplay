@@ -91,7 +91,7 @@ Each screen type carries a table of measured tuning, `PROFILES`, keyed by SPI ba
 screen = Screen280(mighty.spce_a, baudrate=37_500_000)
 ```
 
-Settings resolve as: an explicit keyword, then the `PROFILES` row for the (`baudrate`, `bitdepth`) pair, then the class constants. With no `bitdepth` named, the first depth in `DEPTHS` that has a row for the baud rate wins, so the faster wires default to 16-bit colour and `bitdepth=12` buys their last few frames per second. Every resolved value is checked against the controller's tables, so a bad experiment fails where the mistake is.
+Settings resolve as: an explicit keyword, then the `PROFILES` row for the (`baudrate`, `bitdepth`) pair, then the class constants. With no `bitdepth` named, the first depth in `DEPTHS` that has a row for the baud rate wins, so the faster wires default to 16-bit colour and `bitdepth=12` buys their last few frames per second. A firmware built with picovector at RGBA4444 converts to 12-bit only, `spidisplay.BITDEPTHS` saying so, and the default follows. Every resolved value is checked against the controller's tables, so a bad experiment fails where the mistake is.
 
 The rates run below 60fps because a frame shares the panel with its own refresh. A frame that takes longer than the refresh leaves it to tear, so each profile's rate is the fastest the panel's scan can hold while the wire keeps ahead of it, stepped down where a panel's oscillator spread would otherwise leave no margin.
 
@@ -99,7 +99,7 @@ A row's `"dual"` entry, where it has one, replaces the row on a firmware that co
 
 A baud rate the current peripheral clock cannot reach is refused, since the divider would round the wire down and run the profile's tuning slower than it was measured on. Raise the clock first, `machine.freq(150_000_000, 150_000_000)`, or request a rate the clock reaches.
 
-`band_lines`, `cache_columns` and `stage_lines` override what the profile chose, for profiling a new panel or wire. The first two spend fast SRAM from the same region canvases come from, at least two band buffers plus `cache_columns * width * 4` bytes, for as long as the screen lives. `band_lines` need not divide the height; the last band of a frame is shorter. `stage_lines` deepens the band buffers into a ring of that many rows, which `prepare()` converts ahead of the frame.
+`band_lines`, `cache_columns` and `stage_lines` override what the profile chose, for profiling a new panel or wire. The first two spend fast SRAM from the same region canvases come from, at least two band buffers plus `cache_columns * width * spidisplay.PIXEL_BYTES` bytes, for as long as the screen lives. `band_lines` need not divide the height; the last band of a frame is shorter. `stage_lines` deepens the band buffers into a ring of that many rows, which `prepare()` converts ahead of the frame.
 
 A `PROFILES` row is measured, not derived. `tools/profile_screens.py` sweeps a wire's settings on the panel and records each cell's frame time, and `tools/check_tearing.py` shows a chosen rate holding, drawing the worst case, a heap image at rotation 90, and printing the margin the refresh leaves. A rate that shows no torn band there is one to keep, and `tools/check_te_margin.py` reports the margin of a single setting.
 
