@@ -1,6 +1,6 @@
 # Pimoroni SP/CE Screens - Library Reference <!-- omit in toc -->
 
-This is the library reference for the SP/CE screens, as driven from a Pimoroni Mighty FX through the `screens` module.
+This is the library reference for the SP/CE screens, as driven from any Pimoroni SP/CE host, the Mighty FX among them, through the `screens` module.
 
 
 ## Table of Content <!-- omit in toc -->
@@ -39,15 +39,39 @@ This is the library reference for the SP/CE screens, as driven from a Pimoroni M
 
 ## Getting Started
 
-A screen plugs into one of the Mighty FX's SP/CE ports. Set that port up for screens when creating the `MightyFX` object, then create a screen of the size that is plugged in:
+A screen plugs into a host's SP/CE port. On a host with no board library of its own, such as a Pico Plus 2, `SPCEPort.on_board()` builds the port from the SP/CE pin names the host's firmware carries:
+
+```python
+from spce import SPCEPort
+
+port = SPCEPort.on_board()
+```
+
+An add-on board is a class in `packs`, with its pins built in. `PicoDisplay2` and `PicoDisplay28` are each the port their soldered panel is on, whose TE line the port already knows. Only the 2.8" brings an SP/CE connector out, as `PicoDisplay28.spce()`, which a further screen chains from:
+
+```python
+from packs import PicoDisplay28
+
+panel_port = PicoDisplay28()
+out_port = PicoDisplay28.spce()
+```
+
+On a Mighty FX the board hands out its two ports, so set the port up for screens when creating the `MightyFX` object and take it from there:
 
 ```python
 from mighty_fx import MightyFX, SPCE
+
+mighty = MightyFX(spce_a=SPCE.SCREEN)
+port = mighty.spce_a
+```
+
+Whichever way the port was made, create a screen of the size that is plugged in and draw to it:
+
+```python
 from screens import SCREEN_TYPES
 from picovector import image, color
 
-mighty = MightyFX(spce_a=SPCE.SCREEN)
-screen = SCREEN_TYPES["2.8"](mighty.spce_a)
+screen = SCREEN_TYPES["2.8"](port)
 
 canvas = image(screen.width, screen.height)
 canvas.pen = color.white
@@ -66,8 +90,8 @@ Every further screen on the same port names its `cs`, and its `dc` unless it is 
 
 `te` names the line the panel's tearing-effect signal comes back on. The signal marks the start of each refresh, and waiting on it is what keeps a frame from tearing:
 
-- `True`, the default on a connector, is this screen's own data/command line, which is how the Mighty FX wires a single panel to a port.
-- The port's own data/command line, `mighty.spce_a.dc`, is a line other screens share. This needs a diode on each breakout, and the signal is only asserted for the frame waiting on it.
+- `True`, the default on a connector, is this screen's own data/command line, which is how a connector wires a single panel to a port.
+- The port's own data/command line, `port.dc`, is a line other screens share. This needs a diode on each breakout, and the signal is only asserted for the frame waiting on it.
 - Any other `Pin` is a dedicated input.
 - `False` turns the signal off and never waits. Use it for a panel wired without its tearing-effect signal, which is then not looked for.
 - `None` takes the port's default: `True` on a connector, the shared line on a hub.
@@ -88,7 +112,7 @@ Where `te` is in play, construction raises `ValueError` if no panel answers on t
 Each screen type carries a table of measured tuning, `PROFILES`, keyed by SPI baud rate and bit depth. Naming only a `baudrate` lands on the settings that profiling chose for that wire:
 
 ```python
-screen = Screen280(mighty.spce_a, baudrate=37_500_000)
+screen = Screen280(port, baudrate=37_500_000)
 ```
 
 Settings resolve as: an explicit keyword, then the `PROFILES` row for the (`baudrate`, `bitdepth`) pair, then the class constants. With no `bitdepth` named, the first depth in `DEPTHS` that has a row for the baud rate wins, so the faster wires default to 16-bit colour and `bitdepth=12` buys their last few frames per second. A firmware built with picovector at RGBA4444 converts to 12-bit only, `spidisplay.BITDEPTHS` saying so, and the default follows. Every resolved value is checked against the controller's tables, so a bad experiment fails where the mistake is.
@@ -120,7 +144,7 @@ Both screens of a pair need the same reserve, which `update_pair()` checks. The 
 
 ## Drawing to a Screen
 
-`update()` streams an image to the panel. Any picovector image will do, but the main heap is PSRAM, so an image made with `image()` is read over the flash interface and costs about twice as much per pixel to convert. `canvas()` hands back an image in fast SRAM instead, by default sized to the screen:
+`update()` streams an image to the panel. Any picovector image will do, but on a host with PSRAM the main heap lives there, so an image made with `image()` is read over the flash interface and costs about twice as much per pixel to convert. `canvas()` hands back an image in fast SRAM instead, by default sized to the screen:
 
 ```python
 canvas = screen.canvas()
@@ -131,9 +155,11 @@ screen.update(canvas)
 
 Each size is claimed once from the screen's own share of the SRAM and handed back on every later call, so two screens never share pixels. Half the panel's width and height, drawn with `pixel_double=True`, is a quarter of the bytes: two screens can hold one each where one full-size canvas already fills the region. `canvas(offset=...)` places a canvas by hand at a byte offset into the region, outside the claims.
 
+On a host with no PSRAM, such as a Pico 2 or a Plasma 2350 W, the heap is SRAM already, so an image made with `image()` is the fast source and the budget is the heap itself: a full-size 2.8" image is 307KB, more than the heap has left once the firmware and the screens are in. Draw to a half-size image and pass `pixel_double=True`, or to a smaller image that `update()` centres on `bg_color`. A palettised source is one byte a pixel, a quarter of the size again. A firmware built with picovector at RGBA4444 halves every image instead, so a full-size canvas fits: `canvas()` sizes itself from `spidisplay.PIXEL_BYTES` either way.
+
 `update()` blocks until the frame has left. With `v_sync` on it first waits for the panel's refresh to start, so a loop that draws and updates runs at the panel's frame rate and nothing tears. A frame's own `v_sync` overrides the screen's for that call.
 
-The backlight stays dark until the first frame has been drawn. `brightness()` sets how bright it looks, from 0.0 to 1.0 against perceived brightness, so equal steps look equal. 0.0 is off and every setting above it is one the panel shows. `backlight` carries the rest of the control, `on()` and `off()` among it, and is `None` for a screen built with `bl=False`.
+The backlight stays dark until the first frame has been drawn. Calling `brightness()` before that ends the wait and lights the panel on the bare fill bringup left it with, so draw first. `brightness()` sets how bright it looks, from 0.0 to 1.0 against perceived brightness, so equal steps look equal. 0.0 is off and every setting above it is one the panel shows. `backlight` carries the rest of the control, `on()` and `off()` among it, and is `None` for a screen built with `bl=False`.
 
 
 ## Placing an Image
@@ -156,7 +182,7 @@ Two screens on their own SP/CE ports can be presented together as one. A `Screen
 ```python
 from screens import ScreenPair, Screen280
 
-mighty = MightyFX(spce_a=SPCE.SCREEN, spce_b=SPCE.SCREEN)
+mighty = MightyFX(spce_a=SPCE.SCREEN, spce_b=SPCE.SCREEN)   # A pair needs two connectors, which the Mighty FX has
 pair = ScreenPair(Screen280(mighty.spce_a), Screen280(mighty.spce_b))
 pair.update(canvas)
 ```
@@ -230,7 +256,7 @@ A hub carries several screens on one SP/CE port, each addressed by a chip select
 from screens import ScreenHub, Screen280
 
 mighty = MightyFX(spce_a=SPCE.SCREEN)
-hub = ScreenHub(mighty.spce_a, extra_cs=(24, 25, 26))
+hub = ScreenHub(mighty.spce_a, extra_cs=(24, 25, 26))   # On a Mighty FX, whose SP/CE B lines carry the extra chip selects
 screens = [Screen280(port) for port in hub.ports]
 ```
 
