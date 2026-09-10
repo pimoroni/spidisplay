@@ -11,8 +11,7 @@
 import logging
 import time
 
-from machine import Pin
-from picofx import PWMLED
+from machine import PWM, Pin
 from spidisplay import SPIDisplayBus
 
 
@@ -24,8 +23,8 @@ class SPCE:
     HUB_LINES = 3       # The five pins, as the chip selects a hub addresses panels with
 
 
-class Backlight(PWMLED):
-    """A screen backlight, driven as any other LED on the board is.
+class Backlight:
+    """A screen backlight, a PWM line driven the way a board drives its LEDs.
 
     Dark from power-on until a screen on its port has shown a frame, so no panel lights
     on what bringup left it holding, and reveal_together holds it until every screen
@@ -44,12 +43,13 @@ class Backlight(PWMLED):
     # port's one BL line serving every screen on it.
     MINIMUM_PULSE_US = 20
 
-    # That rate is audible and kept so, leaving the band costing most of the range,
+    # The PWM rate, audible and kept so, leaving the band costing most of the range,
     # since the same pulse is 40% duty at 20kHz. A clk_sys change after this moves it.
-    MINIMUM_DUTY = MINIMUM_PULSE_US * PWMLED.FREQUENCY / 1_000_000
+    FREQUENCY = 1000
+    MINIMUM_DUTY = MINIMUM_PULSE_US * FREQUENCY / 1_000_000
 
     def __init__(self, port, pin):
-        super().__init__(pin, gamma=self.GAMMA)
+        self.__pwm = PWM(Pin(pin), freq=self.FREQUENCY, duty_u16=0)
         self.__port = port
         self.__level = 1.0     # What a frame lights to, and what on() restores
         self.__control = 0.0   # The setting as it was asked for, which toggle inverts
@@ -81,14 +81,22 @@ class Backlight(PWMLED):
         # is what steps evenly to the eye. Offsetting the duty instead would spend the
         # first quarter of the range going nowhere anyone could see.
         if self.__lit:
-            super().brightness(self.__lowest + value * (1.0 - self.__lowest))
+            self.__duty(self.__lowest + value * (1.0 - self.__lowest))
         else:
-            super().brightness(0.0)
+            self.__duty(0.0)
+
+    def __duty(self, curve):
+        # Drive the line at a point on the gamma curve, 0.0 to 1.0
+        self.__pwm.duty_u16(int(pow(curve, self.GAMMA) * 65535 + 0.5))
+
+    def off(self):
+        """Take the line dark, keeping the level for on()."""
+        self.brightness(0.0)
 
     def toggle(self):
-        """Invert the setting, as any other LED here does.
+        """Invert the setting, as a board's LEDs do.
 
-        Its own, not the curve the parent holds, which carries the minimum folded in.
+        Its own, not the curve the duty follows, which carries the minimum folded in.
         """
         self.brightness(1.0 - self.__control)
 
