@@ -189,15 +189,16 @@ class Screen(ScreenBase):
             display.fill()
 
     def __answered(self, display, controller, shared):
-        # An empty line gets a second, longer look, since a missing panel is reported
-        # once and nothing can contradict it.
+        # A present panel shows a period inside PROBE_MS, since TEON's own release is one
+        # rise on an empty line. An empty line gets a second, longer look, since a missing
+        # panel is reported once and nothing can contradict it.
         if shared:
             # One panel at a time may assert on a shared line, so ask and release
             display.command(controller.REG_TEON, bytes((controller.TE_MODE,)))
 
-        answered = display.te_probe(self.PROBE_MS)[2] > 0
+        answered = display.te_probe(self.PROBE_MS)[0] > 0
         if not answered:
-            answered = display.te_probe(self.PATIENT_PROBE_MS)[2] > 0
+            answered = display.te_probe(self.PATIENT_PROBE_MS)[0] > 0
 
         if shared:
             display.command(controller.REG_TEOFF)
