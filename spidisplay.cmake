@@ -1,7 +1,8 @@
 # The spidisplay MicroPython module: a display transform and its DMA transport.
 #
 # A consumer puts this directory on the module path and calls
-# find_package(SPIDISPLAY CONFIG REQUIRED). See README.md for what the module does.
+# find_package(SPIDISPLAY CONFIG REQUIRED). See docs/driver.md for what the module
+# does and what a host firmware must set.
 
 add_library(usermod_spidisplay INTERFACE)
 

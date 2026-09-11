@@ -1,69 +1,76 @@
 # Pimoroni SP/CE Screens - Library Reference <!-- omit in toc -->
 
-This is the library reference for the SP/CE screens, as driven from any Pimoroni SP/CE host, the Mighty FX among them, through the `screens` module.
+This is the library reference for the SP/CE displays, as driven from any Pimoroni SP/CE host through the `screens` module.
 
 
 ## Table of Content <!-- omit in toc -->
 - [Getting Started](#getting-started)
 - [Connecting a Screen](#connecting-a-screen)
-- [Choosing a Profile](#choosing-a-profile)
-- [Reserving Fast Memory](#reserving-fast-memory)
 - [Drawing to a Screen](#drawing-to-a-screen)
 - [Placing an Image](#placing-an-image)
 - [Driving Two Screens Together](#driving-two-screens-together)
   - [Alignment](#alignment)
 - [Driving Several Screens as One](#driving-several-screens-as-one)
-  - [Waiting on one member](#waiting-on-one-member)
+  - [Waiting on One Member](#waiting-on-one-member)
   - [Alignment](#alignment-1)
 - [Using a Hub](#using-a-hub)
+- [Choosing a Profile](#choosing-a-profile)
+- [Reserving Fast Memory](#reserving-fast-memory)
 - [The Controller Module](#the-controller-module)
+- [`ScreenPort` Reference](#screenport-reference)
+  - [Variables](#variables)
+  - [Properties](#properties)
+  - [Functions](#functions)
+- [`Backlight` Reference](#backlight-reference)
+  - [Functions](#functions-1)
 - [`Screen` Reference](#screen-reference)
   - [Constants](#constants)
-  - [Variables](#variables)
-  - [Functions](#functions)
+  - [Properties](#properties-1)
+  - [Functions](#functions-2)
 - [`Screen154` and `Screen280` Reference](#screen154-and-screen280-reference)
 - [`Reserve` Reference](#reserve-reference)
 - [`Tile` Reference](#tile-reference)
 - [`ScreenPair` Reference](#screenpair-reference)
-  - [Variables](#variables-1)
-  - [Functions](#functions-1)
+  - [Properties](#properties-2)
+  - [Functions](#functions-3)
 - [`ScreenGroup` Reference](#screengroup-reference)
-  - [Variables](#variables-2)
-  - [Functions](#functions-2)
+  - [Properties](#properties-3)
+  - [Functions](#functions-4)
 - [`ScreenHub` Reference](#screenhub-reference)
   - [Constants](#constants-1)
-  - [Variables](#variables-3)
-  - [Functions](#functions-3)
+  - [Properties](#properties-4)
+  - [Functions](#functions-5)
 - [Diagnostics](#diagnostics)
 
 
 ## Getting Started
 
-A screen plugs into a host's SP/CE port. On a host with no board library of its own, such as a Pico Plus 2, `SPCEPort.on_board()` builds the port from the SP/CE pin names the host's firmware carries:
+A screen is driven over a `ScreenPort`, built from the five lines the panel needs in the order DC, CS, SCK, MOSI, BL. Nothing names the SPI instance, which the clock pin's GPIO number decides.
+
+On a host with a SP/CE connector, `spce` carries that connector's pins as a tuple, read from the names the firmware gives them:
 
 ```python
-from spce import SPCEPort
+from ports import ScreenPort
+from spce import SPCE_PINS
 
-port = SPCEPort.on_board()
+port = ScreenPort(SPCE_PINS)
 ```
 
-An add-on board is a class in `packs`, with its pins built in. `PicoDisplay2` and `PicoDisplay28` are each the port their soldered panel is on, whose TE line the port already knows. Only the 2.8" brings an SP/CE connector out, as `PicoDisplay28.spce()`, which a further screen chains from:
+A host with more than one connector letters them, as `SPCE_A_PINS` and `SPCE_B_PINS`. A connector the firmware does not name is `None`, and building a port on it says so.
+
+An add-on board is a class in `packs`, already a port for its own panel, with its pins and its TE line built in. Only the 2.8" brings a SP/CE connector out, as `PicoDisplay28.SPCE_PINS`, which a further screen chains from:
 
 ```python
 from packs import PicoDisplay28
+from ports import ScreenPort
 
 panel_port = PicoDisplay28()
-out_port = PicoDisplay28.spce()
+out_port = ScreenPort(PicoDisplay28.SPCE_PINS)
 ```
 
-On a Mighty FX the board hands out its two ports, so set the port up for screens when creating the `MightyFX` object and take it from there:
+Each of these is a plain tuple of pins, so a program putting a connector to some other use reads its lines from the same constant.
 
-```python
-from mighty_fx import MightyFX, SPCE
-
-mighty = MightyFX(spce_a=SPCE.SCREEN)
-port = mighty.spce_a
-```
+`ScreenPort` accepts GPIO numbers as well as `Pin` objects, and a string naming a pin the firmware knows, such as `"SPCE_DC"`. `as_pins(16, 17, 18, 19, 20)` in `ports` turns numbers into objects. A board with a library of its own hands finished ports out instead, and a screen is built on one of those the same way.
 
 Whichever way the port was made, create a screen of the size that is plugged in and draw to it:
 
@@ -107,41 +114,6 @@ Where `te` is in play, construction raises `ValueError` if no panel answers on t
 `reveal_together=True` holds the port's backlight until every screen asking for it has drawn, so a line-up comes up as one. A panel never drawn holds the line dark, so only ask on the screens the program covers. `brightness()` still lights it.
 
 
-## Choosing a Profile
-
-Each screen type carries a table of measured tuning, `PROFILES`, keyed by SPI baud rate and bit depth. Naming only a `baudrate` lands on the settings that profiling chose for that wire:
-
-```python
-screen = Screen280(port, baudrate=37_500_000)
-```
-
-Settings resolve as: an explicit keyword, then the `PROFILES` row for the (`baudrate`, `bitdepth`) pair, then the class constants. With no `bitdepth` named, the first depth in `DEPTHS` that has a row for the baud rate wins, so the faster wires default to 16-bit colour and `bitdepth=12` buys their last few frames per second. A firmware built with picovector at RGBA4444 converts to 12-bit only, `spidisplay.BITDEPTHS` saying so, and the default follows. Every resolved value is checked against the controller's tables, so a bad experiment fails where the mistake is.
-
-The rates run below 60fps because a frame shares the panel with its own refresh. A frame that takes longer than the refresh leaves it to tear, so each profile's rate is the fastest the panel's scan can hold while the wire keeps ahead of it, stepped down where a panel's oscillator spread would otherwise leave no margin.
-
-A row's `"dual"` entry, where it has one, replaces the row on a firmware that converts frames on both cores, since some wires reach a higher rate once one core is no longer what the wire waits for. The firmware decides by default. `dual_profiles=True` or `False` chooses the set by hand, for measuring one against the other, and is a diagnostic setting.
-
-A baud rate the current peripheral clock cannot reach is refused, since the divider would round the wire down and run the profile's tuning slower than it was measured on. Raise the clock first, `machine.freq(150_000_000, 150_000_000)`, or request a rate the clock reaches.
-
-`band_lines`, `cache_columns` and `stage_lines` override what the profile chose, for profiling a new panel or wire. The first two spend fast SRAM from the same region canvases come from, at least two band buffers plus `cache_columns * width * spidisplay.PIXEL_BYTES` bytes, for as long as the screen lives. `band_lines` need not divide the height; the last band of a frame is shorter. `stage_lines` deepens the band buffers into a ring of that many rows, which `prepare()` converts ahead of the frame.
-
-A `PROFILES` row is measured, not derived. `tools/profile_screens.py` sweeps a wire's settings on the panel and records each cell's frame time, and `tools/check_tearing.py` shows a chosen rate holding, drawing the worst case, a heap image at rotation 90, and printing the margin the refresh leaves. A rate that shows no torn band there is one to keep, and `tools/check_te_margin.py` reports the margin of a single setting.
-
-
-## Reserving Fast Memory
-
-`reserve` says what the screen's share of the fast SRAM is for, and is the setting to reach for ahead of the three above:
-
-- `Reserve.CANVAS_SPACE`, the default, claims only what a frame needs and leaves the region for `canvas()`.
-- `Reserve.FULL_SIZE_IMAGES` claims enough for two screens to each convert a full-size image out of the main heap at once, through `update_pair()`. That is the one case that cannot keep up otherwise. A full-size canvas no longer fits alongside it; half-size ones still do.
-
-The reserve buys a frame that does not tear, not a faster one: the conversion moves into `prepare()`, ahead of the frame, so the wire never starves but the pair takes longer to come round. Drawing to `canvas()`, or halving an image and passing `pixel_double=True`, needs neither.
-
-Both screens of a pair need the same reserve, which `update_pair()` checks. The reservation is shared out across the pair, so one on its own leaves both short.
-
-`Reserve.FULL_SIZE_IMAGES` is only available where a screen type has a measured recipe for the wire, in its `FULL_IMAGE_RESERVE`, and raises `ValueError` elsewhere. Both shipped sizes carry one at 24MHz 12-bit.
-
-
 ## Drawing to a Screen
 
 `update()` streams an image to the panel. Any picovector image will do, but on a host with PSRAM the main heap lives there, so an image made with `image()` is read over the flash interface and costs about twice as much per pixel to convert. `canvas()` hands back an image in fast SRAM instead, by default sized to the screen:
@@ -181,9 +153,11 @@ Two screens on their own SP/CE ports can be presented together as one. A `Screen
 
 ```python
 from screens import ScreenPair, Screen280
+from ports import ScreenPort
+from spce import SPCE_A_PINS, SPCE_B_PINS
 
-mighty = MightyFX(spce_a=SPCE.SCREEN, spce_b=SPCE.SCREEN)   # A pair needs two connectors, which the Mighty FX has
-pair = ScreenPair(Screen280(mighty.spce_a), Screen280(mighty.spce_b))
+pair = ScreenPair(Screen280(ScreenPort(SPCE_A_PINS)),   # A pair needs a connector each
+                  Screen280(ScreenPort(SPCE_B_PINS)))
 pair.update(canvas)
 ```
 
@@ -199,7 +173,7 @@ tile=((True, True), False)  # first tiles both axes, second neither
 tile=(Tile.MIRROR, False)   # both screens tile x, every other repeat reflected
 ```
 
-Both screens must be on different ports, since one port is one stream, and must agree on `reserve`, since a reservation is shared out across the pair. They need not be the same size: a pair drives a 1.54" and a 2.8" together, where a group is built over matching screens only. `reveal_together=True` on the pair asks it of both screens, so the two backlights come up on one refresh.
+Both screens must be on different ports, since one port is one stream, and must agree on `reserve`, since a reservation is shared out across the pair. [Reserving Fast Memory](#reserving-fast-memory) below says what that setting claims. They need not be the same size: a pair drives a 1.54" and a 2.8" together, where a group is built over matching screens only. `reveal_together=True` on the pair asks it of both screens, so the two backlights come up on one refresh.
 
 ### Alignment
 
@@ -233,7 +207,7 @@ A group of one member is allowed, so a program written for a hub still runs wher
 
 `reveal_together=True` asks it of every member. One group write covers them all, so it only matters where a subset covers part of the line-up.
 
-### Waiting on one member
+### Waiting on One Member
 
 Panels on a hub refresh independently, so there is no moment when a frame is safe for all of them. `leader` names the one member whose tearing-effect signal a frame waits on: that panel comes out clean and the rest may tear. This needs every member built with `te` set to the shared data/command line, as a hub does by default. `None`, the default, takes the first member that can, saying so on the console if none can. `False` declines the wait, so a frame goes out at once.
 
@@ -254,9 +228,10 @@ A hub carries several screens on one SP/CE port, each addressed by a chip select
 
 ```python
 from screens import ScreenHub, Screen280
+from ports import ScreenPort
+from spce import SPCE_A_PINS, SPCE_B_PINS
 
-mighty = MightyFX(spce_a=SPCE.SCREEN)
-hub = ScreenHub(mighty.spce_a, extra_cs=(24, 25, 26))   # On a Mighty FX, whose SP/CE B lines carry the extra chip selects
+hub = ScreenHub(ScreenPort(SPCE_A_PINS), extra_cs=SPCE_B_PINS)   # Spare host GPIOs, or a second connector's five lines
 screens = [Screen280(port) for port in hub.ports]
 ```
 
@@ -269,6 +244,41 @@ Every panel the hub reaches is reset and cleared as the hub is built, whether a 
 A screen built against a hub port that has no panel raises `ValueError` and claims nothing, so a program can build a screen on every port and keep the ones that answered.
 
 
+## Choosing a Profile
+
+Each screen type carries a table of measured tuning, `PROFILES`, keyed by SPI baud rate and bit depth. Naming only a `baudrate` lands on the settings that profiling chose for that wire:
+
+```python
+screen = Screen280(port, baudrate=37_500_000)
+```
+
+Settings resolve as: an explicit keyword, then the `PROFILES` row for the (`baudrate`, `bitdepth`) pair, then the class constants. With no `bitdepth` named, the first depth in `DEPTHS` that has a row for the baud rate wins, so the faster wires default to 16-bit colour and `bitdepth=12` buys their last few frames per second. A firmware built with picovector at RGBA4444 converts to 12-bit only, `spidisplay.BITDEPTHS` saying so, and the default follows. Every resolved value is checked against the controller's tables, so a bad experiment fails where the mistake is.
+
+The rates run below 60fps because a frame shares the panel with its own refresh. A frame that takes longer than the refresh leaves it to tear, so each profile's rate is the fastest the panel's scan can hold while the wire keeps ahead of it, stepped down where a panel's oscillator spread would otherwise leave no margin.
+
+A row's `"dual"` entry, where it has one, replaces the row on a firmware that converts frames on both cores, since some wires reach a higher rate once one core is no longer what the wire waits for. The firmware decides by default. `dual_profiles=True` or `False` chooses the set by hand, for measuring one against the other, and is a diagnostic setting.
+
+A baud rate the current peripheral clock cannot reach is refused, since the divider would round the wire down and run the profile's tuning slower than it was measured on. Raise the clock first, `machine.freq(150_000_000, 150_000_000)`, or request a rate the clock reaches.
+
+`band_lines`, `cache_columns` and `stage_lines` override what the profile chose, for profiling a new panel or wire. The first two spend fast SRAM from the same region canvases come from, at least two band buffers plus `cache_columns * width * spidisplay.PIXEL_BYTES` bytes, for as long as the screen lives. `band_lines` need not divide the height; the last band of a frame is shorter. `stage_lines` deepens the band buffers into a ring of that many rows, which `prepare()` converts ahead of the frame.
+
+A `PROFILES` row is measured, not derived. `tools/profile_screens.py` sweeps a wire's settings on the panel and records each cell's frame time, and `tools/check_tearing.py` shows a chosen rate holding, drawing the worst case, a heap image at rotation 90, and printing the margin the refresh leaves. A rate that shows no torn band there is one to keep, and `tools/check_te_margin.py` reports the margin of a single setting.
+
+
+## Reserving Fast Memory
+
+`reserve` says what the screen's share of the fast SRAM is for, and is the setting to reach for ahead of the three above:
+
+- `Reserve.CANVAS_SPACE`, the default, claims only what a frame needs and leaves the region for `canvas()`.
+- `Reserve.FULL_SIZE_IMAGES` claims enough for two screens to each convert a full-size image out of PSRAM at once, through `update_pair()`. That is the one case that cannot keep up otherwise. A full-size canvas no longer fits alongside it; half-size ones still do.
+
+The reserve buys a frame that does not tear, not a faster one: the conversion moves into `prepare()`, ahead of the frame, so the wire never starves but the pair takes longer to come round. Drawing to `canvas()`, or halving an image and passing `pixel_double=True`, needs neither.
+
+Both screens of a pair need the same reserve, which `update_pair()` checks. The reservation is shared out across the pair, so one on its own leaves both short.
+
+`Reserve.FULL_SIZE_IMAGES` is only available where a screen type has a measured recipe for the wire, in its `FULL_IMAGE_RESERVE`, and raises `ValueError` elsewhere. Both shipped sizes carry one at 24MHz 12-bit.
+
+
 ## The Controller Module
 
 `st7789` is the module `Screen.CONTROLLER` names, and everything specific to the panel's controller lives there: the register opcodes, the bringup sequence `setup()` writes, and the tables a screen's settings are checked against. `FRAME_RATE_CONTROL` maps a frame rate to its code, and its keys are the only rates a screen accepts. `PIXEL_FORMAT` maps a bit depth, 12 or 16, to its code, which is the one place the panel is told its pixel format; the driver underneath packs to the depth the screen was built with. `PORCH` is the back and front porch `setup()` writes, in scan lines, and `set_porch()` changes them, which is how alignment moves a panel's refresh. `CONTROLLER_ROWS`, 320, is the rows a refresh scans whatever the panel's height, so a 240-row panel scans 80 it does not show, and `LINE_SLOTS` is that plus both porches: a refresh period divided by it is the panel's line time. `TE_ON`, `TE_OFF` and `TE_MODE` are the opcodes the frame path uses to switch one panel's tearing-effect signal onto a shared line.
@@ -276,6 +286,61 @@ A screen built against a hub port that has no panel raises `ValueError` and clai
 `setup()` leaves the panel unflipped, since the controller's scan direction does not follow its `MADCTL` register and a panel flipped there tears. Rotation and mirroring are done in the frame path instead.
 
 A second controller is a new module of the same shape, named through `CONTROLLER` on a `Screen` subclass.
+
+
+## `ScreenPort` Reference
+
+The five lines one or more screens are driven over, and the bus they share. `label` names the port in its refusals, and is the one setting a caller may write to afterwards. The shutting-down calls are separate so a program can take a port down in stages, and `shutdown()` does all three in order. `release()` is the one to reach for where a program builds screens repeatedly, since nothing else hands a bus's DMA channel back and the SDK panics once the sixteen are gone.
+
+### Variables
+```python
+label: str                  # The name this port gives itself in a refusal
+```
+
+### Properties
+```python
+dc: Pin
+cs: Pin
+sck: Pin
+mosi: Pin
+bl: Pin
+```
+
+### Functions
+```python
+# Initialisation
+ScreenPort(pins: tuple[int | Pin | str],
+           label: str=None,
+           te: int | Pin=None)
+
+# Shutting down
+backlight_off() -> None
+stop_panels() -> None
+release() -> None
+shutdown() -> None
+
+# Module functions
+as_pins(*numbers: int) -> tuple[Pin]
+gpio_number(pin: Pin) -> int
+shutdown(*ports: ScreenPort) -> None
+```
+
+`shutdown(*ports)` takes every port down and gives the canvases back, which is what a board's own shutdown does. A port's own `shutdown()` leaves them, another port's screens may still be drawing to them, so `spidisplay.release_buffers()` is what returns them once every port is down.
+
+
+## `Backlight` Reference
+
+A port's backlight, shared by every screen on it and reached as `screen.backlight`. Dark from power-on until a screen on the port has shown a frame, so no panel lights on whatever bringup left it holding.
+
+### Functions
+```python
+brightness(value: float) -> None
+on() -> None
+off() -> None
+toggle() -> None
+```
+
+`brightness()` sets the level and lights to it, which also ends any wait for a frame. `off()` keeps the level for the next `on()`, and `toggle()` inverts the setting.
 
 
 ## `Screen` Reference
@@ -299,9 +364,9 @@ PROFILES = {}              # Measured tuning, per (baudrate, bitdepth)
 ```
 
 
-### Variables
+### Properties
 ```python
-port: SPCEPort
+port: ScreenPort
 backlight: Backlight | None
 screens: tuple[Screen]
 width: int
@@ -317,7 +382,7 @@ requested_baudrate: int     # The rate asked for, which the SPI clock divider ma
 ### Functions
 ```python
 # Initialisation
-Screen(port: SPCEPort,
+Screen(port: ScreenPort,
        cs: int=None,
        dc: int=None,
        te: bool | int=None,
@@ -353,9 +418,9 @@ brightness(value: float) -> None
 
 ## `Screen154` and `Screen280` Reference
 
-`Screen154` is the 1.54" screen, 240 by 240 pixels. `Screen280` is the 2.8" screen, 240 by 320. Each carries a `PROFILES` table for four wires, and a `FULL_IMAGE_RESERVE` recipe at 24MHz 12-bit.
+`Screen154` is the 1.54" screen, 240 by 240 pixels. `Screen280` is the 2.8" screen, 240 by 320. Each carries four `PROFILES` rows, and a `FULL_IMAGE_RESERVE` recipe at 24MHz 12-bit.
 
-| wire | `Screen154` | `Screen280` |
+| profile | `Screen154` | `Screen280` |
 | --- | --- | --- |
 | 24MHz, 12-bit | 53fps | 45fps |
 | 37.5MHz, 16-bit | 60fps | 52fps |
@@ -390,7 +455,7 @@ MIRROR = 2                  # Every other repeat reversed, so each seam is a ref
 
 ## `ScreenPair` Reference
 
-### Variables
+### Properties
 ```python
 screens: tuple[Screen, Screen]
 ```
@@ -418,7 +483,7 @@ update_pair(first: Screen, second: Screen, v_sync: bool=None) -> None
 
 A group is a `ScreenBase`, so it carries the `Screen` variables and functions above, `canvas()`, `update()` and `prepare()` among them.
 
-### Variables
+### Properties
 ```python
 screens: tuple[Screen]      # The members
 ```
@@ -452,7 +517,7 @@ BLIND_FRAMERATE = 60
 BLIND_BAND_LINES = 2
 ```
 
-### Variables
+### Properties
 ```python
 ports: tuple[ScreenHubPort]    # One per chip select, in the order named
 a, b, c, ...: ScreenHubPort    # The same ports by letter, a to z
@@ -460,7 +525,7 @@ a, b, c, ...: ScreenHubPort    # The same ports by letter, a to z
 
 ### Functions
 ```python
-ScreenHub(port: SPCEPort,
+ScreenHub(port: ScreenPort,
           extra_cs: tuple[int | Pin]=(),
           dc: Pin=None,
           te: bool | Pin=None,
@@ -472,4 +537,4 @@ ScreenHub(port: SPCEPort,
 
 The screens report on the console through the `logging` module. At the default level, `LOG_INFO`, they say when a calibration starts and finishes, and why an alignment request went unmet. `logging.level = logging.LOG_DEBUG` adds the figures behind those notices: a pair's porch padding and the drift left after it, a group's verified periods and their spread, every trim correction with the member it moved, the walk engaging and finishing, how many periods a frame was held for the members to come together, and any capture whose falls did not span a plausible period. One panel of a group tearing shows up there first, as the member the corrections keep naming.
 
-Per-frame timing and the tearing-effect counters belong to the driver underneath the screens, not to this API. The tools in `tools/` read them, `check_tearing.py` printing a profile's margin and `check_te_margin.py` a single setting's, and the driver's own README documents what they measure.
+Per-frame timing and the tearing-effect counters belong to the driver underneath the screens, not to this API. The tools in `tools/` read them, `check_tearing.py` printing a profile's margin and `check_te_margin.py` a single setting's, and [driver.md](driver.md) documents what they measure.
