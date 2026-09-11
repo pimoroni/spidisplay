@@ -2,27 +2,29 @@
 #
 # SPDX-License-Identifier: MIT
 #
-# A SP/CE connector, holding what it was declared as, the five GPIOs it carries, and
-# for a screen port the SPI bus and backlight its screens share. A board class builds
-# its own from its pin table and a bare host reads its from Pin.board. The
-# double-underscore methods are the contract a screen is built through, forwarded to
-# here by a hub's ports, and each line is checked before a screen is built and claimed
-# once it is, so a refusal partway leaves nothing behind.
+# A port a screen is driven over, holding the five lines a panel needs and the SPI bus
+# and backlight the screens on it share. An add-on board builds its own from its pin
+# table and a host builds one from the pins its firmware names. The double-underscore
+# methods are the contract a screen is built through, forwarded to here by a hub's
+# ports, and each line is checked before a screen is built and claimed once it is, so a
+# refusal partway leaves nothing behind.
 
 import logging
-import sys
 import time
 
 from machine import PWM, Pin
 from spidisplay import SPIDisplayBus, release_buffers
 
 
-class SPCE:
-    """What a SP/CE connector can be declared as, which decides what it hands out."""
-    SCREEN = 0          # Screens, over the connector's own SPI bus and backlight
-    MOTOR_DRIVER = 1    # Two motors and the enable they share
-    GPIO = 2            # The five pins, free to borrow through io
-    HUB_LINES = 3       # The five pins, as the chip selects a hub addresses panels with
+def as_pins(*numbers):
+    """The given GPIO numbers as Pin objects, a pin tuple reading better as numbers."""
+    return tuple(Pin(number) for number in numbers)
+
+
+def gpio_number(pin):
+    """The GPIO number behind a Pin."""
+    # A Pin gives up its number only through its repr, Pin(GPIO34, ...)
+    return int(str(pin)[8:].split(",")[0])
 
 
 class Backlight:
@@ -135,11 +137,11 @@ class Backlight:
                 # is a loop not reaching the rest and the one shape a caller cannot see
                 if asked and not fresh and not self.__said:
                     self.__said = True
-                    logging.info(f"screens: the backlight is waiting for {waiting_for} more"
-                                 f" screen{'' if waiting_for == 1 else 's'} to show a frame"
-                                 f" before it lights. Update {'it' if waiting_for == 1 else 'them'},"
-                                 f" call backlight.on() to light it now, or create the screens"
-                                 f" without reveal_together.")
+                    logging.info(f"screens: the backlight is waiting for {waiting_for} more "
+                                 f"screen{'' if waiting_for == 1 else 's'} to show a frame "
+                                 f"before it lights. Update {'it' if waiting_for == 1 else 'them'}, "
+                                 f"call backlight.on() to light it now, or create the screens "
+                                 f"without reveal_together.")
                 return None
 
         if keep_dark:
@@ -177,144 +179,95 @@ class Backlight:
         time.sleep_ms(self.__scan_ms)
 
 
-class SPCEPort:
-    """One of a board's SP/CE connectors, built by the board and handed out.
+class ScreenPort:
+    """The five lines one or more screens are driven over, and the bus they share.
 
-    A screen port hands out its own DC, CS and BL lines through the named
-    properties. A port declared SPCE.GPIO hands out all five through io instead, to
-    serve as further screens' CS and DC lines.
+    Built from the pins in the order DC, CS, SCK, MOSI, BL, whether those come from a
+    connector, an add-on board or a caller's own wiring. The SPI
+    instance follows from the clock pin, so nothing names it.
     """
 
-    # The connector's GPIOs, in the order io reports them
-    IO_NAMES = ("dc", "cs", "sck", "mosi", "bl")
+    # The lines in the order they are given, which is what a refusal names
+    LINE_NAMES = ("dc", "cs", "sck", "mosi", "bl")
 
-    @classmethod
-    def on_board(cls, name=None, mode=SPCE.SCREEN):
-        """The connector the board firmware names in Pin.board.
+    def __init__(self, pins, label=None, te=None):
+        """Construct a port over five pins, given as GPIO numbers or Pin objects.
 
-        A board with one SP/CE names its lines SPCE_DC, SPCE_CS, SPCE_SCK, SPCE_MOSI and
-        SPCE_BL. A board with several puts the connector's letter between, SPCE_A_DC,
-        and name picks which. Nothing here is board specific, so a host is supported by
-        adding those five names to its pins.csv.
+        label names this port in its refusals. te is the line a panel's tearing-effect
+        signal comes back on, and defaults to the screen's own data/command line.
         """
-        prefix = "SPCE_" if name is None else f"SPCE_{name}_"
-        try:
-            pins = tuple(getattr(Pin.board, prefix + role.upper()) for role in cls.IO_NAMES)
-        except AttributeError:
-            raise ValueError(f"{sys.implementation._machine} names no {prefix}DC to {prefix}BL in Pin.board. Build the port from its pins with SPCEPort(name, mode, spi, pins).") from None
+        if pins is None:
+            raise ValueError("A screen port needs five pins, in the order DC, CS, SCK, "
+                             "MOSI, BL. None usually means a firmware that names no such "
+                             "connector, so check the board's pins.csv.")
 
-        # RP2 SCK pins alternate between SPI0 and SPI1 every eight GPIOs
-        spi = (cls.__gpio(pins[2]) // 8) & 1
-        return cls(name, mode, spi, pins)
+        if len(pins) != len(self.LINE_NAMES):
+            raise ValueError(f"A screen port needs five pins, in the order DC, CS, SCK, "
+                             f"MOSI, BL. {len(pins)} were given.")
 
-    @staticmethod
-    def __gpio(pin):
-        # A Pin from Pin.board gives up its number only through its repr, Pin(GPIO34, ...)
-        return int(str(pin)[8:].split(",")[0])
+        # Pin() hands back the same object where it is given one, so a number or a Pin
+        # both land here, and so does a string naming a pin the firmware knows
+        self.__pins = tuple(Pin(pin) for pin in pins)
+        self.label = label if label else "Screen port"
 
-    def __init__(self, name, mode, spi, pins, te=None):
-        if mode not in (None, SPCE.SCREEN, SPCE.MOTOR_DRIVER, SPCE.GPIO, SPCE.HUB_LINES):
-            raise ValueError(f"{mode} is not a valid SP/CE mode. Expected SPCE.SCREEN, "
-                             "SPCE.MOTOR_DRIVER, SPCE.GPIO, SPCE.HUB_LINES, or None.")
-
-        self.name = name
-        self.__label = "SP/CE" if name is None else f"SP/CE {name}"
-        self.mode = mode
-
-        # A motor port's pins belong to its Motor objects and an undeclared port is left
-        # alone, so neither offers Pins. The numbers stay for motor_pins, which wants them
-        self.__pin_numbers = tuple(pins)
-        self.__pins = (tuple(Pin(pin) for pin in pins)
-                       if mode in (SPCE.SCREEN, SPCE.GPIO, SPCE.HUB_LINES) else None)
-
-        self.driver = None      # The MotorDriver built here, so a board's shutdown can stop it
+        self.__spi = self.__spi_instance()
 
         # The contract a screen reads by attribute, uniform with a hub's port. A lone
         # panel reads TE from its own DC line, unless the port names the pin TE comes to.
         self.__connector = self
-        self.__dc_line = self.__pins[0] if self.__pins is not None else None
+        self.__dc_line = self.__pins[0]
         self.__default_te = True if te is None else Pin(te)
 
-        self.__spi = spi        # Kept so the bus can be made again after a release()
-        self.__spi_bus = self.__make_bus() if mode == SPCE.SCREEN else None
+        self.__spi_bus = self.__make_bus()
         self.__backlight = None
         self.__screens = []
         self.__cs_claimed = []
         self.__dc_claimed = []
         self.__panels_reset = False
 
-    @property
-    def io(self):
-        """The connector's five GPIOs, in the order DC, CS, SCK, MOSI, BL.
+    def __spi_instance(self):
+        # Which SPI peripheral these pins reach, from the clock line. RP2 SCK pins
+        # alternate between SPI0 and SPI1 every eight GPIOs, SCK sitting two past a
+        # multiple of four and the data line one past that.
+        sck, mosi = (gpio_number(pin) for pin in self.__pins[2:4])
+        if sck % 4 != 2 or mosi % 4 != 3:
+            raise ValueError(f"{self.label} has SCK on GPIO {sck} and MOSI on GPIO {mosi}, "
+                             "which no SPI peripheral reaches. SCK is two past a multiple "
+                             "of four and MOSI the pin after it.")
 
-        Only a port declared SPCE.GPIO offers them, so spending a connector on pins
-        is visible in the call that declared it.
-        """
-        if self.mode != SPCE.GPIO:
-            raise ValueError(f"{self.__label} is not declared SPCE.GPIO, so its pins "
-                             "are not free to borrow")
+        instance = (sck // 8) & 1
+        if instance != ((mosi // 8) & 1):
+            raise ValueError(f"{self.label} has SCK on GPIO {sck} and MOSI on GPIO {mosi}, "
+                             "which are on different SPI peripherals. Both lines have to "
+                             "reach the same one.")
 
-        return self.__pins
+        return instance
 
-    @property
-    def hub_lines(self):
-        """The connector's five GPIOs, as the chip selects a hub addresses panels with.
-
-        Only a port declared SPCE.HUB_LINES offers them, the declaration being what says
-        the connector is spent on another port's screens.
-        """
-        if self.mode != SPCE.HUB_LINES:
-            raise ValueError(f"{self.__label} is not declared SPCE.HUB_LINES, so its "
-                             "pins are not a hub's chip selects")
-
-        return self.__pins
-
-    @property
-    def motor_pins(self):
-        """The four data pins as the two motors' pin pairs, then the shared enable.
-
-        Only a port declared SPCE.MOTOR_DRIVER offers them, so spending a connector
-        on motors is visible in the call that declared it.
-        """
-        if self.mode != SPCE.MOTOR_DRIVER:
-            raise ValueError(f"{self.__label} is not declared SPCE.MOTOR_DRIVER, so "
-                             "its pins are not a motor driver's")
-
-        numbers = self.__pin_numbers
-        return ((numbers[0], numbers[1]), (numbers[2], numbers[3])), numbers[4]
-
-    def __line(self, index):
-        if self.mode != SPCE.SCREEN:
-            raise ValueError(f"{self.__label} is not a screen port, so it has no "
-                             f"{self.IO_NAMES[index]} line")
-
-        return self.__pins[index]
-
-    # Only a screen port has these. Pass dc or cs to a screen to share that line
+    # Pass dc or cs to a screen to share that line
     @property
     def dc(self):
-        """The connector's data and command line, which the first screen on it takes."""
-        return self.__line(0)
+        """The port's data and command line, which the first screen on it takes."""
+        return self.__pins[0]
 
     @property
     def cs(self):
-        """The connector's chip select, which the first screen on it takes."""
-        return self.__line(1)
+        """The port's chip select, which the first screen on it takes."""
+        return self.__pins[1]
 
     @property
     def sck(self):
-        """The connector's SPI clock, which its bus is made on."""
-        return self.__line(2)
+        """The port's SPI clock, which its bus is made on."""
+        return self.__pins[2]
 
     @property
     def mosi(self):
-        """The connector's SPI data line, which its bus is made on."""
-        return self.__line(3)
+        """The port's SPI data line, which its bus is made on."""
+        return self.__pins[3]
 
     @property
     def bl(self):
-        """The connector's backlight line, which every screen on it shares."""
-        return self.__line(4)
+        """The port's backlight line, which every screen on it shares."""
+        return self.__pins[4]
 
     def __make_bus(self):
         return SPIDisplayBus(spi=self.__spi, sck=self.__pins[2], mosi=self.__pins[3])
@@ -324,9 +277,6 @@ class SPCEPort:
         # The SPIDisplayBus every screen on this port streams over. Made again where
         # release() gave its DMA channel back, so a port built on a second time takes a
         # fresh channel instead of handing out a dead bus
-        if self.mode != SPCE.SCREEN:
-            raise ValueError(f"{self.__label} is not a screen port, so it has no display bus")
-
         if self.__spi_bus is None:
             self.__spi_bus = self.__make_bus()
 
@@ -352,7 +302,7 @@ class SPCEPort:
             pin = self.cs
 
         if pin in self.__cs_claimed:
-            raise ValueError(f"{self.__label} already has a screen on {pin}. Every "
+            raise ValueError(f"{self.label} already has a screen on {pin}. Every "
                              "further screen on a port needs a cs of its own.")
 
         return pin
@@ -369,7 +319,7 @@ class SPCEPort:
         if pin is None:
             pin = self.dc
             if any(claimed is pin for claimed, _, _ in self.__dc_claimed):
-                raise ValueError(f"{self.__label}'s own DC line is taken. Give this "
+                raise ValueError(f"{self.label}'s own DC line is taken. Give this "
                                  "screen a dc, or pass the port's dc to share that line.")
 
         for claimed, claimed_te, claimed_shared in self.__dc_claimed:
@@ -387,7 +337,7 @@ class SPCEPort:
         self.__dc_claimed.append((pin, te, shared))
 
     def __claim_backlight(self):
-        # The port's backlight, created for the first screen to ask for it. The connector
+        # The port's backlight, created for the first screen to ask for it. The port
         # carries one BL line, so every screen taking it shares the setting, and where no
         # screen claims it the pin is left alone, free to be a CS or DC
         if self.__backlight is None:
@@ -413,7 +363,7 @@ class SPCEPort:
 
     def release(self):
         """Hand back the bus's DMA channel and its screens' SRAM claims, and stop
-        driving the connector's lines.
+        driving the port's lines.
 
         Nothing else gives these up early, and with 16 DMA channels and a PSRAM heap
         that is rarely collected, a program building screens repeatedly runs out and
@@ -444,23 +394,16 @@ class SPCEPort:
 
         # A display leaves its chip select and DC driven high, which is right while
         # anything may still transmit and wrong once nothing will. Whatever is plugged in
-        # next meets the level these connector pins were left at, and high on a screen's
-        # BL lights its backlight or on a motor input drives it, before that thing's own
-        # code has run. Pulled down is a cold boot's own state at the pin.
-        if self.mode == SPCE.SCREEN:
-            handed_back = self.__pins[:4]   # The BL stays, backlight_off() putting it out
-        elif self.mode in (SPCE.GPIO, SPCE.HUB_LINES):
-            handed_back = self.__pins       # All five, another port's chip selects among them
-        else:
-            handed_back = ()                # A motor port's belong to its Motor objects
-
-        for pin in handed_back:
+        # next meets the level these pins were left at, and high on a screen's BL lights
+        # its backlight before that thing's own code has run. Pulled down is a cold
+        # boot's own state at the pin.
+        for pin in self.__pins[:4]:     # The BL stays, backlight_off() putting it out
             pin.init(Pin.IN, Pin.PULL_DOWN)
 
     def shutdown(self):
-        """Take the port down: backlight out, panels asleep, then release().
+        """Take the port down, backlight out, panels asleep, then release().
 
-        Canvases are left, since another port's screens may still draw to them;
+        Canvases are left, since another port's screens may still draw to them.
         spidisplay.release_buffers() gives those back once every port is down.
         """
         self.backlight_off()
@@ -473,4 +416,3 @@ def shutdown(*ports):
     for port in ports:
         port.shutdown()
     release_buffers()
-

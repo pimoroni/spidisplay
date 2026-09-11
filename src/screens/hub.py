@@ -60,7 +60,7 @@ class ScreenHub:
         """Bring every panel on a port up at once, before any screen on it is built.
         extra_cs names the chip selects beyond the port's own, one per extra panel."""
         if port.__screens:
-            raise ValueError(f"SP/CE {port.name} already has screens, and a hub has to reach every "
+            raise ValueError(f"{port.label} already has screens, and a hub has to reach every "
                              "panel before the first one is built, so build it first")
 
         self.__connector = port
@@ -69,7 +69,8 @@ class ScreenHub:
         # port.cs raises where the connector is not a screen port
         lines = [port.cs]
         for pin in extra_cs:
-            pin = pin if isinstance(pin, Pin) else Pin(pin)
+            # Pin() hands back the same object where it is given one, so either lands here
+            pin = Pin(pin)
             if pin in lines:
                 raise ValueError(f"{pin} is named twice, and each panel on a hub needs a "
                                  "chip select of its own")
