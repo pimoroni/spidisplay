@@ -76,7 +76,7 @@ from spce import SPCE_PINS
 port = ScreenPort(SPCE_PINS)
 ```
 
-[docs/screens.md](docs/screens.md) takes it from here, with the full library reference.
+[examples/](examples/) has programs to run on a host as they are, and [docs/screens.md](docs/screens.md) takes it from here, with the full library reference.
 
 
 ## How It Works
@@ -111,6 +111,7 @@ That overlap is what buys the frame rates, and the panel decides the rest. A pan
 | `src/` | the MicroPython side: the `screens` package, `ports.py` for the lines a panel is driven over, `st7789.py` for the panel controller, `packs.py` and `spce.py` for where those lines come from, `playback.py` for animations a screen is given, and `logging.py` |
 | `driver/` | the C++ driver, which references no MicroPython API and so builds on a host |
 | `bindings/` | the MicroPython bindings around that driver |
+| `examples/` | MicroPython examples per host, for a screen on its SP/CE connector or on an add-on board, one panel or two |
 | `tools/` | on-board checks: bringing up a new panel or a new host, measuring the frame rate a panel holds at a given bus speed, and confirming the converter and the players put out what they should |
 | `tests/` | host tests that compile the driver headers and drive them from Python |
 | `docs/` | the screens, playback and driver references |
