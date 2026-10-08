@@ -67,7 +67,7 @@ screen.update(canvas)
 
 The panel comes up cleared and its backlight stays dark until you have drawn your first frame, so nothing flashes up on whatever the panel was left showing.
 
-On a host with a SP/CE connector, such as a Pico Plus 2, `spce` carries that connector's pins and a `ScreenPort` is built from them:
+On a host with a SP/CE connector, such as a Pico Plus 2, `spce` carries that connector's pins and a `ScreenPort` is built from them. `spce` comes with the host's firmware, from [pimoroni-pico](https://github.com/pimoroni/pimoroni-pico):
 
 ```python
 from ports import ScreenPort
@@ -108,7 +108,7 @@ That overlap is what buys the frame rates, and the panel decides the rest. A pan
 
 | directory | holds |
 | --- | --- |
-| `src/` | the MicroPython side: the `screens` package, `ports.py` for the lines a panel is driven over, `st7789.py` for the panel controller, `packs.py` and `spce.py` for where those lines come from, `playback.py` for animations a screen is given, and `logging.py` |
+| `src/` | the MicroPython side: the `screens` package, `ports.py` for the lines a panel is driven over, `st7789.py` for the panel controller, `packs.py` for the lines an add-on board brings out, `playback.py` for animations a screen is given, and `logging.py` |
 | `driver/` | the C++ driver, which references no MicroPython API and so builds on a host |
 | `bindings/` | the MicroPython bindings around that driver |
 | `examples/` | MicroPython examples per host, for a screen on its SP/CE connector or on an add-on board, one panel or two |
