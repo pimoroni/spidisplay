@@ -282,9 +282,9 @@ SPIDisplay::~SPIDisplay() {
         }
     }
 
-    // Give the workspace back, guarded so a second destruction is a no-op and a
-    // broadcast copy (which shares its member's claim) releases nothing. Both
-    // owner and sharer drop the pointer, so update() is refused afterwards.
+    // Give the workspace back, which a broadcast copy, sharing its member's claim, does
+    // not. A display is destroyed once only, since stores to it here may be dropped and
+    // so cannot guard a second destruction.
     if (owns_sram_claim) {
         allocator().release(sram_claim);
         owns_sram_claim = false;

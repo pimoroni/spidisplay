@@ -24,8 +24,11 @@ static_assert((spidisplay::format_for_bitdepth(16) != 0) == (SPIDISPLAY_HAS_RGB5
 static_assert(spidisplay::DirectSource::bytes == SPIDISPLAY_PIXEL_BYTES,
               "PIXEL_BYTES has to be the width the kernels read");
 
+// Each wrapper records its own destruction, as __del__ runs once by hand and again from the
+// finaliser, and a store to an object inside its own destructor is one the compiler may drop
 typedef struct _SPIDisplayBus_obj_t {
     mp_obj_base_t base;
+    bool destroyed;
     spidisplay::SPIDisplayBus bus;
 } SPIDisplayBus_obj_t;
 
@@ -33,11 +36,27 @@ typedef struct _SPIDisplayBus_obj_t {
 // They are the bus, the member whose SRAM claim a group shares, and a staged source.
 typedef struct _SPIDisplay_obj_t {
     mp_obj_base_t base;
+    bool destroyed;
     mp_obj_t bus_obj;
     mp_obj_t sram_owner_obj;
     mp_obj_t staged_image;
     spidisplay::SPIDisplay display;
 } SPIDisplay_obj_t;
+
+// Whether a display's bus has been destroyed, which leaves the display nothing to stream on
+static bool bus_destroyed(const SPIDisplay_obj_t *self) {
+    return ((const SPIDisplayBus_obj_t *)MP_OBJ_TO_PTR(self->bus_obj))->destroyed;
+}
+
+// Raise where a display can no longer stream, its bus or the display itself destroyed
+static void check_streamable(const SPIDisplay_obj_t *self) {
+    if (bus_destroyed(self)) {
+        mp_raise_ValueError(MP_ERROR_TEXT("this screen's bus has been released, so it can no longer stream. Create a new screen, on a bus that has not been released."));
+    }
+    if (self->destroyed || !self->display.has_sram()) {
+        mp_raise_ValueError(MP_ERROR_TEXT("this screen has been deleted and its SRAM released"));
+    }
+}
 
 static mp_obj_t SPIDisplayBus_make_new(const mp_obj_type_t *type, size_t n_args,
                                        size_t n_kw, const mp_obj_t *all_args) {
@@ -60,6 +79,7 @@ static mp_obj_t SPIDisplayBus_make_new(const mp_obj_type_t *type, size_t n_args,
     uint mosi = mp_hal_get_pin_obj(args[ARG_mosi].u_obj);
 
     SPIDisplayBus_obj_t *self = mp_obj_malloc_with_finaliser(SPIDisplayBus_obj_t, type);
+    self->destroyed = false;
     new (&self->bus) spidisplay::SPIDisplayBus((uint)args[ARG_spi].u_int, sck, mosi,
                                                (uint)args[ARG_baudrate].u_int);
     return MP_OBJ_FROM_PTR(self);
@@ -67,7 +87,11 @@ static mp_obj_t SPIDisplayBus_make_new(const mp_obj_type_t *type, size_t n_args,
 
 static mp_obj_t SPIDisplayBus___del__(mp_obj_t self_in) {
     SPIDisplayBus_obj_t *self = (SPIDisplayBus_obj_t *)MP_OBJ_TO_PTR(self_in);
-    self->bus.~SPIDisplayBus();
+    // Flagged, so a direct call and the collector's later one destroy it only once
+    if (!self->destroyed) {
+        self->bus.~SPIDisplayBus();
+        self->destroyed = true;
+    }
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(SPIDisplayBus___del___obj, SPIDisplayBus___del__);
@@ -91,6 +115,7 @@ static mp_obj_t SPIDisplayBus_broadcast(size_t n_args, const mp_obj_t *args) {
 
     SPIDisplay_obj_t *first = (SPIDisplay_obj_t *)MP_OBJ_TO_PTR(args[1]);
     SPIDisplay_obj_t *group = mp_obj_malloc_with_finaliser(SPIDisplay_obj_t, &SPIDisplay_type);
+    group->destroyed = false;
     group->bus_obj = first->bus_obj;
     group->staged_image = mp_const_none;
     // The group shares the first member's SRAM claim, so hold that member against
@@ -185,6 +210,7 @@ static mp_obj_t SPIDisplay_make_new(const mp_obj_type_t *type, size_t n_args,
 
     SPIDisplayBus_obj_t *bus = (SPIDisplayBus_obj_t *)MP_OBJ_TO_PTR(args[ARG_bus].u_obj);
     SPIDisplay_obj_t *self = mp_obj_malloc_with_finaliser(SPIDisplay_obj_t, type);
+    self->destroyed = false;
     self->bus_obj = args[ARG_bus].u_obj;
     self->sram_owner_obj = mp_const_none;
     self->staged_image = mp_const_none;
@@ -226,16 +252,19 @@ static mp_obj_t SPIDisplay_make_new(const mp_obj_type_t *type, size_t n_args,
 
 static mp_obj_t SPIDisplay___del__(mp_obj_t self_in) {
     SPIDisplay_obj_t *self = (SPIDisplay_obj_t *)MP_OBJ_TO_PTR(self_in);
-    self->display.~SPIDisplay();  // Releases the SRAM claim and the GPIO
+    // Flagged, so a direct call and the collector's later one release the SRAM claim and
+    // the lines only once, a display built since holding both by the time of the second
+    if (!self->destroyed) {
+        self->display.~SPIDisplay();
+        self->destroyed = true;
+    }
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(SPIDisplay___del___obj, SPIDisplay___del__);
 
 static mp_obj_t SPIDisplay_command(size_t n_args, const mp_obj_t *args) {
     SPIDisplay_obj_t *self = (SPIDisplay_obj_t *)MP_OBJ_TO_PTR(args[0]);
-    if (self->display.released()) {
-        mp_raise_ValueError(MP_ERROR_TEXT("this screen's bus has been released, so it can no longer stream. Create a new screen, on a bus that has not been released."));
-    }
+    check_streamable(self);
     // Check if a frame holds the DC line, which a command would drive low under it
     if (self->display.frame_state() != spidisplay::SPIDisplay::FrameState::IDLE) {
         mp_raise_ValueError(MP_ERROR_TEXT("a frame is staged or streaming; update_all() or abort_frame() first"));
@@ -329,12 +358,7 @@ static void SPIDisplay_parse_frame(size_t n_args, const mp_obj_t *pos_args,
     mp_arg_parse_all(n_args, pos_args, kw_args, n_allowed, allowed_args, args);
 
     SPIDisplay_obj_t *self = (SPIDisplay_obj_t *)MP_OBJ_TO_PTR(args[ARG_self].u_obj);
-    if (self->display.released()) {
-        mp_raise_ValueError(MP_ERROR_TEXT("this screen's bus has been released, so it can no longer stream. Create a new screen, on a bus that has not been released."));
-    }
-    if (!self->display.has_sram()) {
-        mp_raise_ValueError(MP_ERROR_TEXT("this screen has been deleted and its SRAM released"));
-    }
+    check_streamable(self);
 
     mp_buffer_info_t buf;
     mp_get_buffer_raise(args[ARG_image].u_obj, &buf, MP_BUFFER_READ);
@@ -517,12 +541,7 @@ static MP_DEFINE_CONST_FUN_OBJ_KW(SPIDisplay_update_obj, 2, SPIDisplay_update);
 // fill(colour=black) streams one solid frame through update()'s path with no source
 static mp_obj_t SPIDisplay_fill(size_t n_args, const mp_obj_t *args) {
     SPIDisplay_obj_t *self = (SPIDisplay_obj_t *)MP_OBJ_TO_PTR(args[0]);
-    if (self->display.released()) {
-        mp_raise_ValueError(MP_ERROR_TEXT("this screen's bus has been released, so it can no longer stream. Create a new screen, on a bus that has not been released."));
-    }
-    if (!self->display.has_sram()) {
-        mp_raise_ValueError(MP_ERROR_TEXT("this screen has been deleted and its SRAM released"));
-    }
+    check_streamable(self);
 
     uint32_t bg = 0;
     if (n_args > 1 && args[1] != mp_const_none) {
@@ -556,7 +575,10 @@ static MP_DEFINE_CONST_FUN_OBJ_KW(SPIDisplay_prepare_obj, 2, SPIDisplay_prepare)
 
 static mp_obj_t SPIDisplay_abort_frame(mp_obj_t self_in) {
     SPIDisplay_obj_t *self = (SPIDisplay_obj_t *)MP_OBJ_TO_PTR(self_in);
-    self->display.abort_frame();
+    // Nothing streams once either is destroyed, and its channel may be another bus's by now
+    if (!self->destroyed && !bus_destroyed(self)) {
+        self->display.abort_frame();
+    }
     self->staged_image = mp_const_none;
     return mp_const_none;
 }
@@ -589,9 +611,7 @@ mp_obj_t spidisplay_update_all(size_t n_args, const mp_obj_t *pos_args, mp_map_t
             mp_raise_TypeError(MP_ERROR_TEXT("update_all takes SPIDisplay objects"));
         }
         SPIDisplay_obj_t *obj = (SPIDisplay_obj_t *)MP_OBJ_TO_PTR(pos_args[i]);
-        if (obj->display.released()) {
-            mp_raise_ValueError(MP_ERROR_TEXT("this screen's bus has been released, so it can no longer stream. Create a new screen, on a bus that has not been released."));
-        }
+        check_streamable(obj);
         if (obj->display.frame_state() != spidisplay::SPIDisplay::FrameState::PREPARED) {
             mp_raise_ValueError(MP_ERROR_TEXT("prepare() every display before update_all()"));
         }
@@ -769,6 +789,7 @@ static MP_DEFINE_CONST_FUN_OBJ_1(SPIDisplay_sram_bytes_obj, SPIDisplay_sram_byte
 // te_probe(ms=250) -> (period_us, high_us, edges)
 static mp_obj_t SPIDisplay_te_probe(size_t n_args, const mp_obj_t *args) {
     SPIDisplay_obj_t *self = (SPIDisplay_obj_t *)MP_OBJ_TO_PTR(args[0]);
+    check_streamable(self);
     mp_int_t ms = n_args > 1 ? mp_obj_get_int(args[1]) : 250;
     if (ms < 1 || ms > 5000) {
         mp_raise_ValueError(MP_ERROR_TEXT("ms must be 1..5000"));
@@ -787,6 +808,7 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(SPIDisplay_te_probe_obj, 1, 2, SPIDis
 // clock. Fewer falls than asked for means the timeout ran out.
 static mp_obj_t SPIDisplay_te_capture(size_t n_args, const mp_obj_t *args) {
     SPIDisplay_obj_t *self = (SPIDisplay_obj_t *)MP_OBJ_TO_PTR(args[0]);
+    check_streamable(self);
     if (self->display.frame_state() != spidisplay::SPIDisplay::FrameState::IDLE) {
         mp_raise_ValueError(MP_ERROR_TEXT("te_capture cannot run with a frame staged, since a staged frame owns the DC line"));
     }
