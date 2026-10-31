@@ -129,9 +129,14 @@ class ScreenBase:
 
     def canvas(self, width=None, height=None, offset=None):
         """Claim an image in fast SRAM, sized to this screen by default and reused per size.
+        The default size follows the screen's rotation, so a quarter turn swaps it.
         offset= instead places one by hand at a byte offset, outside the claims."""
-        width = self.__width if width is None else width
-        height = self.__height if height is None else height
+        upright_width, upright_height = self.__width, self.__height
+        if self.__rotation % 180:
+            upright_width, upright_height = upright_height, upright_width
+
+        width = upright_width if width is None else width
+        height = upright_height if height is None else height
         if width < 1 or height < 1:
             raise ValueError("a canvas needs a positive width and height")
 
