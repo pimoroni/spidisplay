@@ -105,6 +105,13 @@ class ScreenBase:
         return self.__height
 
     @property
+    def canvas_size(self):
+        """The (width, height) a bare canvas() claims, the panel's own turned by this screen's rotation."""
+        if self.__rotation % 180:
+            return self.__height, self.__width
+        return self.__width, self.__height
+
+    @property
     def rotation(self):
         """The angle a frame is placed at unless it sets its own."""
         return self.__rotation
@@ -128,15 +135,11 @@ class ScreenBase:
         self.__backlight.brightness(value)
 
     def canvas(self, width=None, height=None, offset=None):
-        """Claim an image in fast SRAM, sized to this screen by default and reused per size.
-        The default size follows the screen's rotation, so a quarter turn swaps it.
+        """Claim an image in fast SRAM, sized to canvas_size by default and reused per size.
         offset= instead places one by hand at a byte offset, outside the claims."""
-        upright_width, upright_height = self.__width, self.__height
-        if self.__rotation % 180:
-            upright_width, upright_height = upright_height, upright_width
-
-        width = upright_width if width is None else width
-        height = upright_height if height is None else height
+        default_width, default_height = self.canvas_size
+        width = default_width if width is None else width
+        height = default_height if height is None else height
         if width < 1 or height < 1:
             raise ValueError("a canvas needs a positive width and height")
 

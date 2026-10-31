@@ -116,7 +116,7 @@ Where `te` is in play, construction raises `ValueError` if no panel answers on t
 
 ## Drawing to a Screen
 
-`update()` streams an image to the panel. Any picovector image will do, but on a host with PSRAM the main heap lives there, so an image made with `image()` is read over the flash interface and costs about twice as much per pixel to convert. `canvas()` hands back an image in fast SRAM instead, by default sized to the screen as its `rotation` turns it, so a screen built at 90 or 270 gets a canvas with its width and height swapped:
+`update()` streams an image to the panel. Any picovector image will do, but on a host with PSRAM the main heap lives there, so an image made with `image()` is read over the flash interface and costs about twice as much per pixel to convert. `canvas()` hands back an image in fast SRAM instead, by default sized to `canvas_size`. That is the panel's own `width` and `height` turned by the screen's `rotation`, so a screen built at 90 or 270 gets them swapped, and `wide, tall = screen.canvas_size` sizes anything else drawn for the screen, such as a half-size canvas or a heap image:
 
 ```python
 canvas = screen.canvas()
@@ -369,8 +369,9 @@ PROFILES = {}              # Measured tuning, per (baudrate, bitdepth)
 port: ScreenPort
 backlight: Backlight | None
 screens: tuple[Screen]
-width: int
+width: int                  # The panel's own, whatever the rotation
 height: int
+canvas_size: tuple[int, int] # The size a bare canvas() claims, the panel's swapped at 90 and 270
 rotation: int
 mirror: bool
 reveal_together: bool
