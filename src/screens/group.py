@@ -96,6 +96,11 @@ class ScreenGroup(ScreenBase):
     # fed its first frame reacquires. The bookings survive any pause, phases being modular.
     HOLD_PAUSE_MS = 1000
 
+    # Past this since a written member was last measured, the write measures it first.
+    # One fall places a phase, the held period giving the rest, so it costs under a period
+    STALE_MS = 400
+    STALE_EDGES = 1
+
     # Past this gap a resume sweeps the phases before walking, an extrapolation that
     # far being worth less than a measurement
     SWEEP_PAUSE_MS = 1000
@@ -243,6 +248,8 @@ class ScreenGroup(ScreenBase):
         self.__trim_at = 0                      # The member a trim measures next, which rotate keeps
                                                 # current so a switch to probe starts somewhere sensible
         self.__trim_frames = 0                  # Frames since a probing trim last measured
+        self.__waits = 0                        # Frames a rotating trim has seen wait on a member
+        self.__waited = [0] * count             # The wait each member last ended, 0 for none yet
 
         # Diagnostics, read off the group rather than by a frame
         self.__acquired_us = 0                  # The phase spread the last acquisition left
@@ -493,27 +500,47 @@ class ScreenGroup(ScreenBase):
                v_sync=None, to=None):
         """Stream a frame to every member, or to those named in to."""
         owner = self.__subset_of or self
+        written = self.screens if to is None else to
         if owner.__holding:
-            owner.__walk_in(self.screens if to is None else to)
+            # A subset naming its own leader keeps it, and any other follows the rotation
+            if owner.__trim_mode == "rotate" and (self is owner or self.__leader_source is owner):
+                owner.__rotate_leader(written)
+            waits_on = self.__sync_screen(self.__v_sync if v_sync is None else v_sync, to)
+            owner.__walk_in(written, waits_on)
         super().update(image, rotation=rotation, mirror=mirror,
                        pixel_double=pixel_double, offset=offset, tile=tile,
                        bg_color=bg_color, v_sync=v_sync, to=to)
         synced = self.__synced_frame
         owner.__frame_ticked(self.__display.stats(), synced, owner.__sync_delay_us)
-        owner.__tick_trim(synced, self.screens if to is None else to)
+        owner.__tick_trim(synced)
 
-    def __walk_in(self, written):
+    def __rotate_leader(self, written):
+        # Wait on the written member waited on longest ago, so every panel is measured in
+        # turn among those a frame writes, and sets written alternately rotate apart
+        chosen = None
+        for screen in written:
+            index = self.__member_index.get(screen)
+            if index is None or not screen.__shared_te:
+                continue
+            if chosen is None or self.__waited[index] < self.__waited[chosen]:
+                chosen = index
+        if chosen is not None:
+            self.__trim_at = chosen
+            self.__leader = self.screens[chosen]
+
+    def __walk_in(self, written, synced):
         # Nothing is written while this runs, so the group presents in one piece. A tick
         # needs no measurement. Past SWEEP_PAUSE_MS it sweeps first, and past
         # WALK_WAIT_MS the frame goes out regardless.
-        if self.__out_of_phase(written):
+        self.__measure_stale(written)
+        if self.__out_of_phase(written, synced):
             if ((time.ticks_us() - self.__held_stamp) & TICKS_MASK) > self.SWEEP_PAUSE_MS * 1000:
                 self.__reseed()
 
             deadline = time.ticks_add(time.ticks_ms(), self.WALK_WAIT_MS)
             nap = int(self.__target_us / 1000) + 1
             waited = 0
-            while self.__out_of_phase(written):
+            while self.__out_of_phase(written, synced):
                 if time.ticks_diff(deadline, time.ticks_ms()) <= 0:
                     logging.info("screens: some panels are still out of phase, so this frame goes "
                                  "out and tears on them rather than holding the group up any longer")
@@ -529,6 +556,23 @@ class ScreenGroup(ScreenBase):
             if self.__past_budget_us > self.__worst_exposure_us:
                 self.__worst_exposure_us = int(self.__past_budget_us)
 
+    def __measure_stale(self, written):
+        # A booking carried far past its last measurement drifts on stale rates, so a
+        # written member not measured within STALE_MS is captured alone and anchored
+        now = time.ticks_us() & TICKS_MASK
+        stale_us = self.STALE_MS * 1000
+        for screen in written:
+            index = self.__member_index.get(screen)
+            if index is None or not screen.__shared_te or not self.__holding:
+                continue
+            stamp = self.__anchor_stamp[index]
+            if stamp and ((now - stamp) & TICKS_MASK) < stale_us:
+                continue
+            falls, _ = self.__solo_capture(screen, self.STALE_EDGES, self.CAPTURE_TIMEOUT_MS)
+            if falls:
+                self.__check_span(index, falls)
+                self.__tick_hold(falls[-1] & TICKS_MASK, index)
+
     def __reseed(self):
         # Members drift independently while nothing measures them, so re-anchoring one
         # fixes that one alone and a fresh sweep rebooks them all
@@ -542,14 +586,13 @@ class ScreenGroup(ScreenBase):
         logging.debug(f"screens: swept the members after a pause, spread "
                       f"{int(max(errors) - min(errors))}us for the walk to close")
 
-    def __out_of_phase(self, written):
+    def __out_of_phase(self, written, synced):
         # How far the worst written member is past what a wait tolerates, 0 for none.
         # The write starts centre_us into the synced member's scan, so that is how far
         # out a member may be before it leaves its margin, plus WAIT_SLACK_LINES.
         # __past_budget_us keeps the excess over the budget itself.
         self.__past_budget_us = 0
         members = self.screens
-        synced = self.__leader
         if synced is None or synced not in written:
             return 0
 
@@ -790,7 +833,7 @@ class ScreenGroup(ScreenBase):
             self.__trim_mode = "probe"
             self.__trim_frames = 0
 
-    def __tick_trim(self, synced=None, written=None):
+    def __tick_trim(self, synced=None):
         # A calibration goes stale as the panels warm. rotate moves the wait target to the
         # next member each frame, so every booking stays within a few periods of a
         # measurement. probe re-measures one member every TRIM_FRAMES, stalling that frame.
@@ -799,19 +842,12 @@ class ScreenGroup(ScreenBase):
 
         members = self.screens
         if self.__trim_mode == "rotate":
-            # The member a frame waited on is the one it measured, and only a written member
-            # can be waited on next, so the leader moves to the next written member after it.
-            # Every member takes its turn, walking or not, and a skipped one drifts on a stale
-            # rate, seen as a tear that walks.
-            if synced is None:
-                return
-            index = self.__member_index[synced]
-            for _ in range(len(members)):
-                index = (index + 1) % len(members)
-                if written is members or members[index] in written:
-                    break
-            self.__trim_at = index
-            self.__leader = members[index]
+            # The member a frame waited on is the one it measured, and __rotate_leader picks
+            # the next as each frame is written. Every member takes its turn, walking or not,
+            # and a skipped one drifts on a stale rate, seen as a tear that walks.
+            if synced is not None:
+                self.__waits += 1
+                self.__waited[self.__member_index[synced]] = self.__waits
             return
 
         self.__trim_frames += 1
