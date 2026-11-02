@@ -120,9 +120,11 @@ class ScreenHub:
                                           band_lines=self.BLIND_BAND_LINES,
                                           cache_columns=0, stage_lines=0)
                     for line in lines]
+        # A hub of one is a plain screen port, and a broadcast of one is refused
+        every_panel = displays[0]
         try:
-            # A hub of one is a plain screen port, and a broadcast of one is refused
-            every_panel = displays[0] if len(displays) == 1 else self.__connector.__bus.broadcast(*displays)
+            if len(displays) > 1:
+                every_panel = self.__connector.__bus.broadcast(*displays)
             controller.reset(every_panel)
             controller.setup(every_panel, columns, rows,
                              controller.PIXEL_FORMAT[self.BLIND_BITDEPTH],
@@ -130,6 +132,10 @@ class ScreenHub:
                              te=False)
             every_panel.fill()
         finally:
+            # The broadcast holds the bus's workspace as the displays do, until it is deleted
+            if every_panel is not displays[0]:
+                every_panel.__del__()
+
             # The destructor drives each chip select high, so the lines stay deasserted
             for display in displays:
                 display.__del__()

@@ -243,6 +243,8 @@ Every panel the hub reaches is reset and cleared as the hub is built, whether a 
 
 A screen built against a hub port that has no panel raises `ValueError` and claims nothing, so a program can build a screen on every port and keep the ones that answered.
 
+The screens on a hub take turns on one stream, so they share the fast SRAM a frame is converted through, as much as the largest of them needs, and a hub of six leaves as much for `canvas()` as a single screen does. One screen at a time can hold a `prepare()`d frame, and another screen on the hub raises on `prepare()` or `update()` until that frame has been streamed.
+
 
 ## Choosing a Profile
 
@@ -260,7 +262,7 @@ A row's `"dual"` entry, where it has one, replaces the row on a firmware that co
 
 A baud rate the current peripheral clock cannot reach is refused, since the divider would round the wire down and run the profile's tuning slower than it was measured on. Raise the clock first, `machine.freq(150_000_000, 150_000_000)`, or request a rate the clock reaches.
 
-`band_lines`, `cache_columns` and `stage_lines` override what the profile chose, for profiling a new panel or wire. The first two spend fast SRAM from the same region canvases come from, at least two band buffers plus `cache_columns * width * spidisplay.PIXEL_BYTES` bytes, for as long as the screen lives. `band_lines` need not divide the height; the last band of a frame is shorter. `stage_lines` deepens the band buffers into a ring of that many rows, which `prepare()` converts ahead of the frame.
+`band_lines`, `cache_columns` and `stage_lines` override what the profile chose, for profiling a new panel or wire. The first two spend fast SRAM from the same region canvases come from, at least two band buffers plus `cache_columns * width * spidisplay.PIXEL_BYTES` bytes, for as long as the screen lives, shared with any other screens on the same port. `band_lines` need not divide the height; the last band of a frame is shorter. `stage_lines` deepens the band buffers into a ring of that many rows, which `prepare()` converts ahead of the frame.
 
 A `PROFILES` row is measured, not derived. `tools/profile_screens.py` sweeps a wire's settings on the panel and records each cell's frame time, and `tools/check_tearing.py` shows a chosen rate holding, drawing the worst case, a heap image at rotation 90, and printing the margin the refresh leaves. A rate that shows no torn band there is one to keep, and `tools/check_te_margin.py` reports the margin of a single setting.
 

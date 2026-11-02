@@ -48,6 +48,13 @@ def _load_library():
     lib.allocator_headroom.restype = ctypes.c_size_t
     lib.allocator_region_bytes.restype = ctypes.c_size_t
     lib.allocator_max_claims.restype = ctypes.c_int
+    lib.shared_join.restype = ctypes.c_int
+    lib.shared_join.argtypes = [ctypes.c_size_t]
+    lib.shared_leave.restype = None
+    lib.shared_drop.restype = None
+    lib.shared_base.restype = ctypes.c_longlong
+    lib.shared_bytes.restype = ctypes.c_size_t
+    lib.shared_users.restype = ctypes.c_int
     return lib
 
 
@@ -202,3 +209,86 @@ def test_table_exhaustion_fails_cleanly():
 
     lib.allocator_release(claims[0])
     assert lib.allocator_claim(8) == claims[0]
+
+
+def test_shared_claim_is_held_until_the_last_user_leaves():
+    lib = _load_library()
+    lib.allocator_reset()
+    region = lib.allocator_region_bytes()
+
+    assert lib.shared_join(400) == 1
+    assert lib.shared_base() == region - 400
+
+    # A smaller need joins the claim as it stands.
+    assert lib.shared_join(200) == 1
+    assert lib.shared_base() == region - 400
+    assert lib.shared_bytes() == 400
+    assert lib.shared_users() == 2
+
+    lib.shared_leave()
+    assert lib.allocator_available() == region - 400
+    lib.shared_leave()
+    assert lib.shared_base() == -1
+    assert lib.allocator_available() == region
+
+    # A leave with no users left does nothing.
+    lib.shared_leave()
+    assert lib.shared_users() == 0
+
+
+def test_shared_claim_grows_to_the_largest_need():
+    lib = _load_library()
+    lib.allocator_reset()
+    region = lib.allocator_region_bytes()
+
+    lib.shared_join(400)
+    assert lib.shared_join(800) == 1
+    assert lib.shared_base() == region - 800
+    assert lib.shared_bytes() == 800
+    assert lib.allocator_available() == region - 800
+
+    # Only the last user out releases it, whichever need it joined with.
+    lib.shared_leave()
+    assert lib.allocator_available() == region - 800
+    lib.shared_leave()
+    assert lib.allocator_available() == region
+
+
+def test_shared_claim_keeps_its_block_when_a_grow_does_not_fit():
+    lib = _load_library()
+    lib.allocator_reset()
+    region = lib.allocator_region_bytes()
+
+    lib.allocator_claim_low(region - 600)
+    lib.shared_join(400)
+    assert lib.allocator_available() == 200
+
+    # The grow can see the 600 its own release frees, which is still short of 800.
+    assert lib.shared_join(800) == 0
+    assert lib.shared_base() == region - 400
+    assert lib.shared_bytes() == 400
+    assert lib.shared_users() == 1
+    assert lib.allocator_available() == 200
+
+    # A first join that does not fit leaves nothing behind.
+    lib.shared_leave()
+    assert lib.shared_join(region) == 0
+    assert lib.shared_base() == -1
+    assert lib.shared_users() == 0
+
+
+def test_shared_claim_drop_releases_whatever_its_users():
+    lib = _load_library()
+    lib.allocator_reset()
+    region = lib.allocator_region_bytes()
+
+    lib.shared_join(400)
+    lib.shared_join(400)
+    lib.shared_drop()
+    assert lib.shared_base() == -1
+    assert lib.allocator_available() == region
+
+    # A user leaving after the drop finds nothing to release, and another claim keeps its place.
+    other = lib.allocator_claim(400)
+    lib.shared_leave()
+    assert lib.allocator_available() == other

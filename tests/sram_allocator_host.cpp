@@ -15,12 +15,14 @@ using namespace spidisplay;
 static constexpr size_t REGION_BYTES = 4096;
 static uint8_t region[REGION_BYTES] __attribute__((aligned(4)));
 static SRAMAllocator allocator;
+static SharedClaim shared;
 
 // Offsets keep the Python side pointer-free: claims report their distance from
 // the region base, -1 for a refused claim.
 extern "C" void allocator_reset(void) {
     allocator = SRAMAllocator();
     allocator.init(region, region + REGION_BYTES);
+    shared = SharedClaim();
 }
 
 extern "C" long long allocator_claim(size_t bytes) {
@@ -55,4 +57,28 @@ extern "C" size_t allocator_region_bytes(void) {
 
 extern "C" int allocator_max_claims(void) {
     return SRAMAllocator::MAX_CLAIMS;
+}
+
+extern "C" int shared_join(size_t bytes) {
+    return shared.join(allocator, bytes) ? 1 : 0;
+}
+
+extern "C" void shared_leave(void) {
+    shared.leave(allocator);
+}
+
+extern "C" void shared_drop(void) {
+    shared.drop(allocator);
+}
+
+extern "C" long long shared_base(void) {
+    return shared.base() == nullptr ? -1 : (long long)(shared.base() - region);
+}
+
+extern "C" size_t shared_bytes(void) {
+    return shared.bytes();
+}
+
+extern "C" int shared_users(void) {
+    return shared.users();
 }

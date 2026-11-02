@@ -362,7 +362,7 @@ class ScreenPort:
             screen.CONTROLLER.stop(screen.__display)
 
     def release(self):
-        """Hand back the bus's DMA channel and its screens' SRAM claims, and stop
+        """Hand back the bus's DMA channel and the SRAM its screens share, and stop
         driving the port's lines.
 
         Nothing else gives these up early, and with 16 DMA channels and a PSRAM heap

@@ -53,8 +53,8 @@ static bool read_te(uint pin) {
     return gpio_get(pin) != 0;
 }
 
-// Displays claim their workspace from the top at construction, leaving buffer() views
-// their bottom-up addresses. The M33 has no data cache, so DMA sees CPU writes at once.
+// Buses claim their displays' workspace from the top, leaving buffer() views their
+// bottom-up addresses. The M33 has no data cache, so DMA sees CPU writes at once.
 static SRAMAllocator sram;
 static bool sram_bound = false;
 
@@ -170,7 +170,33 @@ SPIDisplayBus::~SPIDisplayBus() {
             irq_set_enabled(DMA_IRQ_2, false);
             irq_remove_handler(DMA_IRQ_2, dma_irq2_handler);
         }
+
+        // Nothing can stream on this bus again, so a display or group still joined
+        // has no use for the workspace
+        workspace.drop(allocator());
+        stager = nullptr;
     }
+}
+
+const SPIDisplay *SPIDisplayBus::staged_display() const {
+    if (stager == nullptr || stager->frame_state() == SPIDisplay::FrameState::IDLE) {
+        return nullptr;
+    }
+    return stager;
+}
+
+bool SPIDisplayBus::join_workspace(size_t bytes) {
+    if (bytes > workspace.bytes() && staged_display() != nullptr) {
+        return false;
+    }
+    return workspace.join(allocator(), bytes);
+}
+
+void SPIDisplayBus::leave_workspace(const SPIDisplay *display) {
+    if (stager == display) {
+        stager = nullptr;
+    }
+    workspace.leave(allocator());
 }
 
 uint32_t SPIDisplayBus::set_baudrate(uint32_t value) {
@@ -210,7 +236,7 @@ SPIDisplay::SPIDisplay(SPIDisplayBus *bus, uint cs, uint dc, int te, uint8_t ram
                                       : (cache_columns > width ? width : cache_columns)),
       requested_baudrate(baudrate) {
     // Banding is settled here, since it turns only on the request and the panel
-    // height, and the workspace claim below is sized for whatever it settles on.
+    // height, and the workspace need below is sized for whatever it settles on.
     int requested = band_lines < 1 ? 1 : band_lines;
     rows_per_band = requested > dst_h ? dst_h : requested;
 
@@ -226,7 +252,7 @@ SPIDisplay::SPIDisplay(SPIDisplayBus *bus, uint cs, uint dc, int te, uint8_t ram
         slot_count = 2;
     }
 
-    // The band ring, the cache scratch, then the palette, one claim. Rounding
+    // The band ring, the cache scratch, then the palette, in one workspace. Rounding
     // the band to 4 keeps every slot and the cache word-aligned. The cache is
     // sized by width, a window caching up to dst_w source rows of its columns
     // (column_cache.hpp), so height would under-provision a landscape panel, and
@@ -234,13 +260,12 @@ SPIDisplay::SPIDisplay(SPIDisplayBus *bus, uint cs, uint dc, int te, uint8_t ram
     full_row_bytes = packed_row_bytes(fmt, dst_w);
     band_bytes = (rows_per_band * full_row_bytes + 3) & ~(size_t)3;
     cache_capacity = this->cache_columns * dst_w * DirectSource::bytes;
-    sram_claim_bytes = (size_t)slot_count * band_bytes + (size_t)cache_capacity
-                     + PALETTE_BYTES;
-    sram_claim = allocator().claim_high(sram_claim_bytes);
-    owns_sram_claim = sram_claim != nullptr;
-    if (!owns_sram_claim) {
+    workspace_need = (size_t)slot_count * band_bytes + (size_t)cache_capacity
+                   + PALETTE_BYTES;
+    joined_workspace = bus->join_workspace(workspace_need);
+    if (!joined_workspace) {
         // The wrapper raises on has_sram(). No GPIO is configured, so the
-        // half-built object's destructor has nothing to undo but the claim.
+        // half-built object's destructor has nothing to undo.
         achieved_baudrate = 0;
         return;
     }
@@ -282,14 +307,14 @@ SPIDisplay::~SPIDisplay() {
         }
     }
 
-    // Give the workspace back, which a broadcast copy, sharing its member's claim, does
-    // not. A display is destroyed once only, since stores to it here may be dropped and
-    // so cannot guard a second destruction.
-    if (owns_sram_claim) {
-        allocator().release(sram_claim);
-        owns_sram_claim = false;
+    // Leave the bus's workspace, whose storage outlives this display even where its
+    // destructor has run. A display is destroyed once only, since stores to it here
+    // may be dropped and so cannot guard a second destruction.
+    if (joined_workspace) {
+        bus->leave_workspace(this);
+        joined_workspace = false;
     }
-    sram_claim = nullptr;
+    workspace = nullptr;
 
     // Release CS so the panel is not left holding a half-written frame open. The
     // bus may already be destroyed, so this touches nothing but GPIO.
@@ -601,6 +626,10 @@ void SPIDisplay::prepare(const uint8_t *src, int src_w, int src_h, int src_strid
 
     use_baudrate();
 
+    // This frame holds the bus's workspace until IDLE, which no grow can move while it does
+    workspace = bus->workspace.base();
+    bus->stager = this;
+
     bool dbl = pixel_double != 0;
     bool indexed = palette != nullptr;
 
@@ -616,7 +645,7 @@ void SPIDisplay::prepare(const uint8_t *src, int src_w, int src_h, int src_strid
     // Built every frame, since a caller may assign entries in place and a cached copy
     // would go stale silently. Compositing here makes transparency free per pixel.
     if (indexed) {
-        uint8_t *table = sram_claim + (size_t)slot_count * band_bytes
+        uint8_t *table = workspace + (size_t)slot_count * band_bytes
                        + (size_t)cache_capacity;
         prepare_palette(table, palette, palette_len, desc.bg_r, desc.bg_g, desc.bg_b);
         desc.palette = table;
@@ -638,7 +667,7 @@ void SPIDisplay::prepare(const uint8_t *src, int src_w, int src_h, int src_strid
                          && src_addr < PSRAM_CACHED_BASE + PSRAM_WINDOW);
 
     // The cache stays live across bands, so a window seeded by one serves the next
-    cache = ColumnCache((uint32_t *)(sram_claim + (size_t)slot_count * band_bytes),
+    cache = ColumnCache((uint32_t *)(workspace + (size_t)slot_count * band_bytes),
                         cache_capacity, cache_columns);
     cache.begin(desc, convert, src_in_psram);
 

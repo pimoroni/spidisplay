@@ -5,9 +5,9 @@
 // An allocator for claiming regions of free SRAM between the GC heap symbols.
 //
 // Claims can be taken from either end of the free SRAM, by claim_high() and
-// claim_low(). In spidisplay the Displays take their bands and cache workspaces
-// from the high end and their frame canvases from the low end, so the two sets
-// grow towards each other. The free SRAM between high and low is always one
+// claim_low(). In spidisplay each bus takes the workspace its displays share from
+// the high end, through a SharedClaim, and canvases come from the low end, so the
+// two sets grow towards each other. The free SRAM between high and low is always one
 // contiguous span, and neither end fragments the other.
 //
 // Note, the two ends are released differently. A high claim has an owner whose
@@ -224,6 +224,57 @@ private:
     Claim claims[MAX_CLAIMS] = {};
     uint8_t *start = nullptr;
     uint8_t *end = nullptr;
+};
+
+// A high claim several users share, sized to the largest need any of them has joined
+// with and held until the last one leaves. Growing moves the claim, so a user takes
+// base() afresh each time it starts to use it.
+class SharedClaim {
+public:
+    // Join with a need of `bytes`, growing the claim where it is smaller. Returns false
+    // with the claim unchanged if the larger one does not fit.
+    bool join(SRAMAllocator &allocator, size_t bytes) {
+        if (bytes > held_bytes) {
+            uint8_t *old_base = claim_base;
+            allocator.release(old_base);
+            uint8_t *grown = allocator.claim_high(bytes);
+            if (grown == nullptr) {
+                // The old block's own space is free again, so taking it back cannot fail
+                if (old_base != nullptr) {
+                    claim_base = allocator.claim_high(held_bytes);
+                }
+                return false;
+            }
+            claim_base = grown;
+            held_bytes = bytes;
+        }
+        ++user_count;
+        return true;
+    }
+
+    // Leave, the last user out releasing the claim
+    void leave(SRAMAllocator &allocator) {
+        if (user_count > 0 && --user_count == 0) {
+            drop(allocator);
+        }
+    }
+
+    // Release the claim whatever its users, any still joined finding no base
+    void drop(SRAMAllocator &allocator) {
+        allocator.release(claim_base);
+        claim_base = nullptr;
+        held_bytes = 0;
+        user_count = 0;
+    }
+
+    uint8_t *base() const { return claim_base; }
+    size_t bytes() const { return held_bytes; }
+    int users() const { return user_count; }
+
+private:
+    uint8_t *claim_base = nullptr;
+    size_t held_bytes = 0;      // The largest need joined with, as asked for
+    int user_count = 0;
 };
 
 }  // namespace spidisplay

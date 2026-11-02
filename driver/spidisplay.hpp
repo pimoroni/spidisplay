@@ -8,6 +8,9 @@
 // One SPIDisplayBus per SPI port owns the peripheral, its DMA channel and its rate.
 // Each SPIDisplay on that bus streams a converted frame band by band, driving its own
 // CS and DC masks, so a broadcast group is one display carrying every member's bits.
+//
+// A bus streams one frame at a time, so its displays share one SRAM workspace, sized
+// to the largest of them, for the band ring, column cache and palette a frame uses.
 
 #pragma once
 
@@ -19,6 +22,7 @@
 
 #include "column_cache.hpp"
 #include "descriptor.hpp"
+#include "sram_allocator.hpp"
 
 namespace spidisplay {
 
@@ -79,6 +83,8 @@ private:
     int dma_word_bits;            // Width the DMA channel is currently configured for
     uint32_t requested_baudrate;  // What a display last asked for, for the compare
     uint32_t achieved_baudrate;   // What the divider reached for that request
+    SharedClaim workspace;        // Joined by each display and broadcast copy
+    SPIDisplay *stager = nullptr; // The display that last staged a frame in the workspace
 
     //--------------------------------------------------
     // Constructors/Destructor
@@ -90,7 +96,21 @@ public:
     //--------------------------------------------------
     // Methods
     //--------------------------------------------------
+public:
+    // The display whose frame is staged or streaming in the workspace, nullptr when none
+    const SPIDisplay *staged_display() const;
+
+    // Bytes the shared workspace holds, the largest need any display joined with
+    size_t workspace_bytes() const { return workspace.bytes(); }
+
 private:
+    // Join the workspace with a need of `bytes`. Growing it moves it, so that is
+    // refused while a frame is staged, and a grow that does not fit is refused too.
+    bool join_workspace(size_t bytes);
+
+    // Leave the workspace, the last display out releasing it
+    void leave_workspace(const SPIDisplay *display);
+
     // Re-rate the bus, returning the rate the divider reached. Takes effect on the
     // next transfer, so never while a frame streams.
     uint32_t set_baudrate(uint32_t value);
@@ -142,14 +162,14 @@ private:
     int rows_per_band;  // Destination rows per DMA band, clamped at construction
     int cache_columns;  // Column cache width, clamped to the panel at construction
 
-    // Band ring, cache storage, then an indexed source's palette, in one claim
-    uint8_t *sram_claim = nullptr;
-    size_t sram_claim_bytes = 0;
+    // Band ring, cache storage, then an indexed source's palette, in the bus's workspace
+    uint8_t *workspace = nullptr;   // Its base, taken at prepare() since a grow moves it
+    size_t workspace_need = 0;      // What this display's layout takes of it
     size_t band_bytes = 0;          // One band buffer, rounded up to 4
     size_t full_row_bytes = 0;      // A whole panel row packed, which prices a frame
                                     // before one is staged
     int cache_capacity = 0;         // Cache storage in bytes
-    bool owns_sram_claim = false;   // False on a copy, which shares the member's claim
+    bool joined_workspace = false;  // Whether this display has joined the bus's workspace
     uint32_t requested_baudrate;    // What this display asks the bus for
     uint32_t achieved_baudrate;     // What the divider gave it
     FrameStats last = {};
@@ -198,19 +218,21 @@ private:
     //--------------------------------------------------
 public:
     // Construct a display on a bus, from its pins, the panel's register opcodes and its
-    // geometry. The band ring and cache are claimed from SRAM here, which has_sram()
-    // reports on. te < 0 reads the tearing-effect signal from the dc line rather than
-    // its own input. band_lines is rows per DMA band, stage_lines the ring depth in
-    // rows and cache_columns the column cache width, 0 to disable.
+    // geometry, joining the bus's workspace, which has_sram() reports on. The bus's
+    // storage must outlive the display, though the bus may be destroyed first. te < 0
+    // reads the tearing-effect signal from the dc line rather than its own input.
+    // band_lines is rows per DMA band, stage_lines the ring depth in rows and
+    // cache_columns the column cache width, 0 to disable.
     SPIDisplay(SPIDisplayBus *bus, uint cs, uint dc, int te, uint8_t ram_write,
                uint8_t te_on, uint8_t te_off, uint8_t te_mode,
                int bitdepth, int width, int height, uint32_t baudrate,
                int band_lines, int cache_columns, int stage_lines);
 
-    // Construct a copy of an existing display as a broadcast group, claiming nothing
+    // Construct a copy of an existing display as a broadcast group, joining the
+    // workspace the member already fits
     SPIDisplay(const SPIDisplay &member) {
         *this = member;
-        owns_sram_claim = false;
+        joined_workspace = member.has_sram() && bus->join_workspace(workspace_need);
         state = FrameState::IDLE;  // A group never inherits a member's staged frame
         target_cs_mask = 0;        // nor the lines that frame was narrowed to write
         target_dc_mask = 0;
@@ -369,11 +391,13 @@ public:
     // Whether the bus has given its DMA channel back, refusing command() and update()
     bool released() const { return bus->dma_chan < 0; }
 
-    // Whether the SRAM claim is still held, update() being refused once it is gone
-    bool has_sram() const { return sram_claim != nullptr; }
+    // Whether the bus's workspace is still held for this display, update() being
+    // refused once it is gone
+    bool has_sram() const { return joined_workspace && bus->workspace.base() != nullptr; }
 
-    // Bytes claimed for the band and cache workspace, a group reporting its first's
-    size_t sram_bytes() const { return sram_claim_bytes; }
+    // Bytes this display's band ring and cache take of the bus's shared workspace, a
+    // group reporting its first's
+    size_t sram_bytes() const { return workspace_need; }
 
     // Instrumentation from the most recent update()
     FrameStats stats() const { return last; }
@@ -399,7 +423,7 @@ public:
 private:
     // The ring slot a band index streams from
     uint8_t *slot_ptr(int band_index) const {
-        return sram_claim + (size_t)(band_index % slot_count) * band_bytes;
+        return workspace + (size_t)(band_index % slot_count) * band_bytes;
     }
 
     // Rows convertible into the current band now, under the ring rule at

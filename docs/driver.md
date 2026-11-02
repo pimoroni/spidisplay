@@ -83,7 +83,9 @@ Kicks are interrupt driven, from the DMA_IRQ_2 handler. `kick_from_isr()` runs i
 
 The region is the SRAM between the linker's GC heap symbols where a firmware put its whole GC heap in PSRAM, and a block taken from the heap where the GC owns that SRAM instead. [What a Host Firmware Needs](#what-a-host-firmware-needs) above says which a host gets and how the block is sized. The bindings choose, reading where the port's first heap area landed, and the driver's allocator is bound to whichever it is handed. A heap block lives in root pointers, so a soft reset drops it with the rest of the heap and the next screen takes a fresh one.
 
-Each display claims its band ring, its column cache storage and the palette an indexed source is drawn through as one block from the top of the SRAM region, at construction. The palette is per display because interleaving drives several through frames concurrently, and in SRAM because a per-pixel indirection into PSRAM would reintroduce the XIP miss the column cache exists to remove. A broadcast copy shares its first member's claim and releases nothing, so the wrapper roots the member for the group's lifetime.
+A display's band ring, its column cache storage and the palette an indexed source is drawn through sit in one workspace, claimed from the top of the SRAM region. A bus streams one frame at a time, so its displays and broadcast groups share a single workspace, sized to the largest of them: six panels on one bus take one panel's workspace, not six. Interleaving drives displays on different buses concurrently, each through its own bus's workspace. The palette is in SRAM because a per-pixel indirection into PSRAM would reintroduce the XIP miss the column cache exists to remove.
+
+A display joins its bus's workspace at construction, growing it where it needs more, and the last display or group to go releases it, as does destroying the bus. A grow moves the workspace, so it is refused while a frame is staged in it. Likewise, a display's `prepare()`, `update()` or `fill()` raises while another display on the same bus has a frame staged, since its frame would overwrite the staged one. `sram_bytes()` is what a display needs of the workspace, not what the workspace holds.
 
 `buffer()` claims canvases from the bottom of the same region. The views have no owner to finalise them, so `release_buffers()` belongs with releasing the screens that drew to them.
 
@@ -92,7 +94,7 @@ The module functions over that region, none of which belongs to either type:
 | call | does |
 | --- | --- |
 | `buffer(nbytes)` | claims from the bottom and returns a writable `memoryview`, for a picovector image that converts at half the cost of one in PSRAM |
-| `buffer(nbytes, offset)` | places a view by hand at an offset from the region's base, bounded by the display workspaces but claimed from nothing, so it may overlap another view |
+| `buffer(nbytes, offset)` | places a view by hand at an offset from the region's base, bounded by the buses' workspaces but claimed from nothing, so it may overlap another view |
 | `buffer_size()` | the bytes a claim can still take, which shrinks with screens and canvases and recovers on release |
 | `release_buffers()` | drops every canvas claim at once. A view still held then points at space the next claim can take |
 | `dual_convert()` | whether a frame's rows are halved across both cores, on by default. `dual_convert(enable)` sets it, and turning it off leaves one core, for timing the two against each other |

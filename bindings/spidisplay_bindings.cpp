@@ -32,13 +32,12 @@ typedef struct _SPIDisplayBus_obj_t {
     spidisplay::SPIDisplayBus bus;
 } SPIDisplayBus_obj_t;
 
-// Three references held against collection, for pointers the C++ object holds bare.
-// They are the bus, the member whose SRAM claim a group shares, and a staged source.
+// Two references held against collection, for pointers the C++ object holds bare.
+// They are the bus, whose workspace a display shares, and a staged source.
 typedef struct _SPIDisplay_obj_t {
     mp_obj_base_t base;
     bool destroyed;
     mp_obj_t bus_obj;
-    mp_obj_t sram_owner_obj;
     mp_obj_t staged_image;
     spidisplay::SPIDisplay display;
 } SPIDisplay_obj_t;
@@ -55,6 +54,20 @@ static void check_streamable(const SPIDisplay_obj_t *self) {
     }
     if (self->destroyed || !self->display.has_sram()) {
         mp_raise_ValueError(MP_ERROR_TEXT("this screen has been deleted and its SRAM released"));
+    }
+}
+
+// Raise where another display on the bus has a frame staged in the workspace they share,
+// which staging this display's frame would overwrite
+static void check_workspace_free(const SPIDisplay_obj_t *self) {
+    const SPIDisplayBus_obj_t *bus = (const SPIDisplayBus_obj_t *)MP_OBJ_TO_PTR(self->bus_obj);
+    const spidisplay::SPIDisplay *staged = bus->bus.staged_display();
+    if (staged != nullptr && staged != &self->display) {
+        // The lowest CS bit names the panel, or a group's first member
+        mp_raise_msg_varg(&mp_type_ValueError,
+            MP_ERROR_TEXT("the display on CS GPIO%u has a frame staged in the workspace this bus's "
+                          "displays share. Stream it with update_all() or drop it with abort_frame() first"),
+            (unsigned)__builtin_ctzll(staged->cs_lines()));
     }
 }
 
@@ -111,6 +124,8 @@ static mp_obj_t SPIDisplayBus_broadcast(size_t n_args, const mp_obj_t *args) {
         if (((SPIDisplay_obj_t *)MP_OBJ_TO_PTR(args[i]))->bus_obj != args[0]) {
             mp_raise_ValueError(MP_ERROR_TEXT("every member must be on this bus"));
         }
+        // The group is copied from its first member and joins the workspace it fits
+        check_streamable((SPIDisplay_obj_t *)MP_OBJ_TO_PTR(args[i]));
     }
 
     SPIDisplay_obj_t *first = (SPIDisplay_obj_t *)MP_OBJ_TO_PTR(args[1]);
@@ -118,9 +133,6 @@ static mp_obj_t SPIDisplayBus_broadcast(size_t n_args, const mp_obj_t *args) {
     group->destroyed = false;
     group->bus_obj = first->bus_obj;
     group->staged_image = mp_const_none;
-    // The group shares the first member's SRAM claim, so hold that member against
-    // collection for the group's lifetime. Deleting it by hand still dangles the group.
-    group->sram_owner_obj = args[1];
     new (&group->display) spidisplay::SPIDisplay(first->display);
 
     for (size_t i = 2; i < n_args; ++i) {
@@ -212,7 +224,6 @@ static mp_obj_t SPIDisplay_make_new(const mp_obj_type_t *type, size_t n_args,
     SPIDisplay_obj_t *self = mp_obj_malloc_with_finaliser(SPIDisplay_obj_t, type);
     self->destroyed = false;
     self->bus_obj = args[ARG_bus].u_obj;
-    self->sram_owner_obj = mp_const_none;
     self->staged_image = mp_const_none;
     new (&self->display) spidisplay::SPIDisplay(
         &bus->bus, cs, dc, te, (uint8_t)args[ARG_ram_write].u_int,
@@ -239,12 +250,22 @@ static mp_obj_t SPIDisplay_make_new(const mp_obj_type_t *type, size_t n_args,
             default:
                 break;
         }
+        // Check if the shared workspace was refused a grow, which would move a staged frame
+        const spidisplay::SPIDisplay *staged = bus->bus.staged_display();
+        if (staged != nullptr) {
+            mp_raise_msg_varg(&mp_type_ValueError,
+                MP_ERROR_TEXT("this display needs a larger workspace than its bus's displays share, "
+                              "and the display on CS GPIO%u has a frame staged in it. "
+                              "Stream it with update_all() or drop it with abort_frame() first"),
+                (unsigned)__builtin_ctzll(staged->cs_lines()));
+        }
         // Both sides of the shortfall, since only the caller can free the difference
         mp_raise_msg_varg(&mp_type_ValueError,
-            MP_ERROR_TEXT("display workspace needs %u bytes but only %u are free; "
-                          "release old screens and collect them "
+            MP_ERROR_TEXT("display workspace needs %u bytes, and its bus's displays share %u "
+                          "with %u more free; release old screens and collect them "
                           "or reduce band_lines/cache_columns"),
             (unsigned)self->display.sram_bytes(),
+            (unsigned)bus->bus.workspace_bytes(),
             (unsigned)spidisplay_sram_available());
     }
     return MP_OBJ_FROM_PTR(self);
@@ -252,8 +273,8 @@ static mp_obj_t SPIDisplay_make_new(const mp_obj_type_t *type, size_t n_args,
 
 static mp_obj_t SPIDisplay___del__(mp_obj_t self_in) {
     SPIDisplay_obj_t *self = (SPIDisplay_obj_t *)MP_OBJ_TO_PTR(self_in);
-    // Flagged, so a direct call and the collector's later one release the SRAM claim and
-    // the lines only once, a display built since holding both by the time of the second
+    // Flagged, so a direct call and the collector's later one leave the workspace and
+    // release the lines only once, a display built since holding both by the second
     if (!self->destroyed) {
         self->display.~SPIDisplay();
         self->destroyed = true;
@@ -359,6 +380,7 @@ static void SPIDisplay_parse_frame(size_t n_args, const mp_obj_t *pos_args,
 
     SPIDisplay_obj_t *self = (SPIDisplay_obj_t *)MP_OBJ_TO_PTR(args[ARG_self].u_obj);
     check_streamable(self);
+    check_workspace_free(self);
 
     mp_buffer_info_t buf;
     mp_get_buffer_raise(args[ARG_image].u_obj, &buf, MP_BUFFER_READ);
@@ -542,6 +564,7 @@ static MP_DEFINE_CONST_FUN_OBJ_KW(SPIDisplay_update_obj, 2, SPIDisplay_update);
 static mp_obj_t SPIDisplay_fill(size_t n_args, const mp_obj_t *args) {
     SPIDisplay_obj_t *self = (SPIDisplay_obj_t *)MP_OBJ_TO_PTR(args[0]);
     check_streamable(self);
+    check_workspace_free(self);
 
     uint32_t bg = 0;
     if (n_args > 1 && args[1] != mp_const_none) {
