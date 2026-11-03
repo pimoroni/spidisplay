@@ -211,7 +211,11 @@ class ScreenGroup(ScreenBase):
         # A group places its own frames, so an unnamed rotation is upright, not a member's
         rotation = 0 if rotation is None else rotation
         mirror = False if mirror is None else bool(mirror)
-        if any(screen.rotation != rotation or screen.mirror != mirror for screen in screens):
+
+        # Check if a member was built with a placement this group overrides. One built upright
+        # and unmirrored asked for none, so the group placing its frames is no surprise to it.
+        if any((screen.rotation or screen.mirror)
+               and (screen.rotation != rotation or screen.mirror != mirror) for screen in screens):
             logging.info(f"screens: a group places its own frames, at rotation {rotation}"
                          f"{' and mirrored' if mirror else ''}, so its members' own placement is "
                          "not used. Create the group with the placement its screens want.")
