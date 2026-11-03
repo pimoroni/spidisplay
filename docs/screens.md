@@ -219,6 +219,8 @@ With `align` on, the group brings its members' refreshes into step and holds the
 
 A frame after a long pause first waits for the members to come back together, up to about half a second, then goes out and tears on any still out of step, since a stalled wall is worse than one spoiled frame.
 
+A frame also measures any member it writes that has gone unmeasured for a while, costing up to a refresh each, so a wall written in parts every half second or so slows down. `idle(ms)` takes the place of `time.sleep_ms(ms)` between frames: it measures the members in turn and keeps them in step while the program waits, leaving the next frame nothing to measure. Pass the time until the next frame, since a call shorter than a refresh has no room to measure. On a subset it keeps the whole group in step.
+
 `trim` says how the group keeps its members' rates current as the panels warm. `None`, the default, rotates the member each frame waits on so every panel is measured in turn, among the panels that frame writes, so a subset takes turns among its own members, even where several subsets are written alternately. `"probe"` re-measures one member every thirty frames instead, stalling that frame briefly. `False` turns it off. Only a group that aligned has anything to trim.
 
 
@@ -507,6 +509,7 @@ subset(*screens: Screen, leader: Screen | bool=None, reveal_together: bool=False
 
 # Alignment
 is_aligned() -> bool
+idle(ms: int) -> None
 ```
 
 

@@ -101,6 +101,10 @@ class ScreenGroup(ScreenBase):
     STALE_MS = 400
     STALE_EDGES = 1
 
+    # How long after its last measurement idle() measures a member again, half STALE_MS so a
+    # program idling between frames leaves its writes nothing to measure
+    FRESH_MS = 200
+
     # Past this gap a resume sweeps the phases before walking, an extrapolation that
     # far being worth less than a measurement
     SWEEP_PAUSE_MS = 1000
@@ -557,21 +561,73 @@ class ScreenGroup(ScreenBase):
                 self.__worst_exposure_us = int(self.__past_budget_us)
 
     def __measure_stale(self, written):
-        # A booking carried far past its last measurement drifts on stale rates, so a
-        # written member not measured within STALE_MS is captured alone and anchored
+        # A booking carried far past its last measurement drifts on stale rates, so every
+        # written member past STALE_MS is measured, the stalest first. idle() leaves none.
+        # A released hold anchors nothing, so it ends the loop.
+        while self.__holding:
+            index, due_ms = self.__stalest(written, self.STALE_MS)
+            if index is None or due_ms > 0 or not self.__measure(index):
+                return
+
+    def __stalest(self, among, after_ms):
+        # The member of among measured longest ago, and the ms until it is after_ms old, 0
+        # or less once it is. (None, 0) where none can be measured.
         now = time.ticks_us() & TICKS_MASK
-        stale_us = self.STALE_MS * 1000
-        for screen in written:
+        chosen = None
+        oldest = -1
+        for screen in among:
             index = self.__member_index.get(screen)
-            if index is None or not screen.__shared_te or not self.__holding:
+            if index is None or not screen.__shared_te:
                 continue
             stamp = self.__anchor_stamp[index]
-            if stamp and ((now - stamp) & TICKS_MASK) < stale_us:
+            # A member never measured is as stale as can be
+            age = (now - stamp) & TICKS_MASK if stamp else TICKS_MASK
+            if age > oldest:
+                chosen = index
+                oldest = age
+        if chosen is None:
+            return None, 0
+        return chosen, after_ms - oldest // 1000
+
+    def __measure(self, index, horizon_us=0):
+        # Capture one member alone and anchor it, as a frame waiting on it would. Returns
+        # whether it answered.
+        screen = self.screens[index]
+        falls, _ = self.__solo_capture(screen, self.STALE_EDGES, self.CAPTURE_TIMEOUT_MS)
+        if not falls:
+            return False
+        self.__check_span(index, falls)
+        self.__tick_hold(falls[-1] & TICKS_MASK, index, horizon_us)
+        return True
+
+    def idle(self, ms):
+        """Pass ms milliseconds, in place of a sleep, keeping the members in step. A program
+        idling between frames this way keeps its writes prompt."""
+        owner = self.__subset_of or self
+        deadline = time.ticks_add(time.ticks_ms(), ms)
+        # Every tick here aims to close the errors by the deadline, where the next write starts
+        silent = False
+        while True:
+            remaining = time.ticks_diff(deadline, time.ticks_ms())
+            if remaining <= 0:
+                return
+            if not owner.__holding:
+                time.sleep_ms(remaining)
+                return
+
+            # A capture can take a whole period, so one starts only where that fits. A
+            # silent member would be due again at once, so one ends the measuring.
+            period_ms = owner.__target_us // 1000 + 1
+            index, due_ms = owner.__stalest(owner.screens, owner.FRESH_MS)
+            if not silent and index is not None and due_ms <= 0 and remaining > period_ms:
+                silent = not owner.__measure(index, remaining * 1000)
                 continue
-            falls, _ = self.__solo_capture(screen, self.STALE_EDGES, self.CAPTURE_TIMEOUT_MS)
-            if falls:
-                self.__check_span(index, falls)
-                self.__tick_hold(falls[-1] & TICKS_MASK, index)
+
+            # Otherwise the hold ticks once a period, as a walk-in does, so a porch moved
+            # for a frame's gap is moved back as soon as the bookings call for it
+            nap = min(remaining, period_ms)
+            time.sleep_ms(nap)
+            owner.__tick_hold(time.ticks_us() & TICKS_MASK, -1, (remaining - nap) * 1000)
 
     def __reseed(self):
         # Members drift independently while nothing measures them, so re-anchoring one
@@ -649,11 +705,14 @@ class ScreenGroup(ScreenBase):
                 anchored = self.__member_index.get(synced, -1)
         self.__tick_hold(stamp & TICKS_MASK, anchored)
 
-    def __tick_hold(self, stamp, anchored):
+    def __tick_hold(self, stamp, anchored, horizon_us=0):
         # anchored is the member index the wait ended on, or -1 where nothing was measured.
         # Errors are held against the reference member, which is never dithered, so the
         # whole group warming together costs nothing. A dithered line lands with a
         # one-frame ambiguity, so an unmeasured hold would random-walk apart.
+        #
+        # The walk closes each error over the next gap, taken to match the last unless
+        # horizon_us says how long until the next write starts, a period at least.
         if not self.__holding:
             return
 
@@ -689,6 +748,8 @@ class ScreenGroup(ScreenBase):
 
         # Read after __anchor, which may have rebased the target
         target = self.__target_us
+        if horizon_us:
+            periods = max(horizon_us / target, 1.0)
         centre = self.__centre_us
         walk_lines = self.WALK_LINES
         walk_floor = self.WALK_FLOOR_LINES
