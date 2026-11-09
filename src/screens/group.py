@@ -507,6 +507,9 @@ class ScreenGroup(ScreenBase):
                offset=None, tile=False, bg_color=None,
                v_sync=None, to=None):
         """Stream a frame to every member, or to those named in to."""
+        # Drop a frame left by prepare() before measuring, since it holds the shared DC line
+        self.__display.abort_frame()
+
         owner = self.__subset_of or self
         written = self.screens if to is None else to
         if owner.__holding:

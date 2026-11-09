@@ -202,7 +202,12 @@ class ScreenBase:
         return None
 
     def update(self, image, *, rotation=None, mirror=None, pixel_double=False, offset=None, tile=False, bg_color=None, v_sync=None, to=None):
-        """Stream a frame to this screen, or to every member of a group."""
+        """Stream a frame to this screen, or to every member of a group.
+
+        Any frame prepare()d here and not yet streamed is dropped, as this one replaces it."""
+        # A staged frame holds the DC line, which the pair's commands below need too
+        self.__display.abort_frame()
+
         if self.__pair is not None:
             # Hand back the panel state alignment holds, this frame being outside the pair
             self.__pair.__release_panel()

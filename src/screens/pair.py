@@ -21,25 +21,33 @@ __BOTH_FALSE = (False, False)
 
 
 def update_pair(first, second, v_sync=None):
-    """Stream the frames two screens have prepare()d, at once and each on its own TE edge."""
-    if first is second:
-        raise ValueError("update_pair needs two different screens")
-    if first.port is second.port:
-        raise ValueError("update_pair needs a screen on each SP/CE port, since one port is one "
-                         "stream. broadcast() shares a port")
+    """Stream the frames two screens have prepare()d, at once and each on its own TE edge.
 
-    # A reservation is shared out across the pair, so one alone leaves both short
-    if first.__reserve != second.__reserve:
-        raise ValueError("update_pair needs both screens built with the same reserve, since a "
-                         "reservation is shared out across the pair. Set it on both, or on neither")
+    A refused pair drops both frames, so either screen can update() on its own next."""
+    try:
+        if first is second:
+            raise ValueError("update_pair needs two different screens")
+        if first.port is second.port:
+            raise ValueError("update_pair needs a screen on each SP/CE port, since one port is one "
+                             "stream. broadcast() shares a port")
 
-    if v_sync is None:
-        v_sync = first.__v_sync and second.__v_sync
-    elif v_sync and not (first.__v_sync and second.__v_sync):
-        raise ValueError("v_sync needs both screens created with te, since each waits on its own "
-                         "panel's tearing-effect signal")
+        # A reservation is shared out across the pair, so one alone leaves both short
+        if first.__reserve != second.__reserve:
+            raise ValueError("update_pair needs both screens built with the same reserve, since a "
+                             "reservation is shared out across the pair. Set it on both, or on neither")
 
-    spidisplay.update_all(first.__display, second.__display, v_sync=v_sync)
+        if v_sync is None:
+            v_sync = first.__v_sync and second.__v_sync
+        elif v_sync and not (first.__v_sync and second.__v_sync):
+            raise ValueError("v_sync needs both screens created with te, since each waits on its own "
+                             "panel's tearing-effect signal")
+
+        spidisplay.update_all(first.__display, second.__display, v_sync=v_sync)
+    except BaseException:
+        # Drop both frames, since a staged frame holds its DC line against any other command
+        first.__display.abort_frame()
+        second.__display.abort_frame()
+        raise
 
     # Revealed together, both backlights wait the longer of the two scans owed and light as one
     together = first.reveal_together and second.reveal_together
@@ -277,9 +285,14 @@ class ScreenPair:
         first_screen.prepare(image, rotation=rotations[0], mirror=mirrors[0],
                              pixel_double=doubles[0], offset=offsets[0],
                              tile=tiles[0], bg_color=backgrounds[0])
-        second_screen.prepare(second, rotation=rotations[1], mirror=mirrors[1],
-                              pixel_double=doubles[1], offset=offsets[1],
-                              tile=tiles[1], bg_color=backgrounds[1])
+        try:
+            second_screen.prepare(second, rotation=rotations[1], mirror=mirrors[1],
+                                  pixel_double=doubles[1], offset=offsets[1],
+                                  tile=tiles[1], bg_color=backgrounds[1])
+        except BaseException:
+            # Drop the first screen's frame too, as a refused update_pair() does
+            first_screen.__display.abort_frame()
+            raise
         update_pair(first_screen, second_screen, v_sync=v_sync)
 
         if self.__align:

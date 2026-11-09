@@ -144,7 +144,7 @@ The image need not match the panel. Every frame is placed by the same settings, 
 - `tile` repeats the source along its own axes, one value for both or an `(x, y)` pair. Each value is `False`, `True` or `Tile.MIRROR`, the last reversing every other repeat so each seam is a reflection: any source tiles seamlessly, and half an image mirrored fills the whole panel.
 - `bg_color` fills whatever the image does not cover, black by default.
 
-`prepare()` takes the same placement settings and stages a frame without sending it, for `update_pair()` below. Nothing reaches the panel until the pair is updated.
+`prepare()` takes the same placement settings and stages a frame without sending it, for `update_pair()` below. Nothing reaches the panel until the pair is updated, and an `update()` on the screen meanwhile drops the staged frame and sends its own.
 
 
 ## Driving Two Screens Together
@@ -183,7 +183,7 @@ Two panels refresh from their own oscillators, so left alone their refreshes dri
 
 Alignment needs both screens built with `te` and `v_sync`, and an aligned pair refuses `v_sync=False` on a frame, the signal being what it measures by. Alignment adjusts the following panel's refresh; updating that screen on its own, outside the pair, hands its own refresh back, as does `stop_aligning()`.
 
-`update_pair(first, second)` is the plain entry underneath: it streams whatever frames the two screens have `prepare()`d, with no alignment.
+`update_pair(first, second)` is the plain entry underneath: it streams whatever frames the two screens have `prepare()`d, with no alignment. If it raises, both frames are dropped, so either screen can `update()` on its own straight after.
 
 
 ## Driving Several Screens as One
