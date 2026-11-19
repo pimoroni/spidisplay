@@ -1,6 +1,6 @@
 # Plasma 2350 Screen Examples <!-- omit in toc -->
 
-These are MicroPython examples for a SP/CE display on a [Plasma 2350](https://shop.pimoroni.com/products/plasma-2350) or [Plasma 2350 W](https://shop.pimoroni.com/products/plasma-2350-w), whose firmware carries the `spidisplay` module and names the connector's pins. Each one draws with picovector alone, so none of them needs a file alongside it.
+These are MicroPython examples for a SP/CE display on a [Plasma 2350](https://shop.pimoroni.com/products/plasma-2350), whose firmware carries the `spidisplay` module and names the connector's pins. Each one draws with picovector alone, so none of them needs a file alongside it.
 
 - [Running an Example](#running-an-example)
 - [Memory on a Host Without PSRAM](#memory-on-a-host-without-psram)

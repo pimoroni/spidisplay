@@ -1,6 +1,6 @@
 # Pico Plus 2 Screen Examples <!-- omit in toc -->
 
-These are MicroPython examples for a [Pico Plus 2](https://shop.pimoroni.com/products/pico-plus-2), and for any host that carries PSRAM and the same SP/CE pins, the Pico LiPo 2 and Pico LiPo 2 XL W among them, whose firmware carries the `spidisplay` module and names those pins. The single-screen examples drive a display on the board's own connector. The pair examples want a [Pico Display Pack 2.8](https://shop.pimoroni.com/products/pico-display-pack-2-8) on the headers with a second display chained from the connector that pack brings out. None of them needs a file alongside it.
+These are MicroPython examples for a [Pico Plus 2](https://shop.pimoroni.com/products/pimoroni-pico-plus-2), and for any host that carries PSRAM and the same SP/CE pins, the Pico LiPo 2 and Pico LiPo 2 XL W among them, whose firmware carries the `spidisplay` module and names those pins. The single-screen examples drive a display on the board's own connector. The pair examples want a [Pico Display Pack 2.8](https://shop.pimoroni.com/products/pico-display-pack-2-8) on the headers with a second display chained from the connector that pack brings out. None of them needs a file alongside it.
 
 - [Running an Example](#running-an-example)
 - [Which Ports a Pair Can Use](#which-ports-a-pair-can-use)
