@@ -8,6 +8,7 @@ This repository is home to the `screens` MicroPython library for the Pimoroni SP
 
 - [Introduction](#introduction)
 - [Supported Hardware](#supported-hardware)
+- [Download Firmware](#download-firmware)
 - [Getting Started](#getting-started)
 - [How It Works](#how-it-works)
 - [What You Can Do](#what-you-can-do)
@@ -34,6 +35,13 @@ Behind that one call, the library converts your image and streams it to the pane
 
 ## Supported Hardware
 
+### Displays
+
+* SP/CE Display, 2.8" at 240x320 pixels or 1.54" at 240x240 - https://shop.pimoroni.com/products/spce-display
+* SP/CE Screen Hub, which carries up to six displays on one SP/CE port - https://shop.pimoroni.com/products/spce-screen-hub
+
+A hub needs five more chip select lines besides the port it is plugged into. On a Mighty FX they come from its second SP/CE connector, and on any other host from spare GPIOs, wired in the order [docs/screens.md](docs/screens.md#using-a-hub) gives.
+
 Two add-on boards carry a panel of the same kind, and each is a class in `packs` with its pins built in:
 
 * Pico Display Pack 2.0 - https://shop.pimoroni.com/products/pico-display-pack-2-0
@@ -41,12 +49,35 @@ Two add-on boards carry a panel of the same kind, and each is a class in `packs`
 
 The 2.8" also brings a SP/CE connector out, which a second display chains from.
 
-A host is an RP2350 board whose firmware is built with the `spidisplay` module and names its SP/CE pins, a Pico Plus 2 among them, and a host with more than one connector drives a display on each.
+### Hosts
+
+A host is an RP2350 board whose firmware carries the `spidisplay` module and names its SP/CE pins. These are supported:
+
+| Host | Displays connect through |
+| --- | --- |
+| [Mighty FX](https://shop.pimoroni.com/products/mightyfx) | two SP/CE connectors, a display on each |
+| [Pico Plus 2](https://shop.pimoroni.com/products/pimoroni-pico-plus-2) | one SP/CE connector |
+| [Pico LiPo 2](https://shop.pimoroni.com/products/pimoroni-pico-lipo-2) and [Pico LiPo 2 XL W](https://shop.pimoroni.com/products/pimoroni-pico-lipo-2-xl-w) | one SP/CE connector |
+| [Plasma 2350](https://shop.pimoroni.com/products/plasma-2350) | one SP/CE connector |
+| [Raspberry Pi Pico 2](https://shop.pimoroni.com/products/raspberry-pi-pico-2), [Pico 2 W](https://shop.pimoroni.com/products/raspberry-pi-pico-2-w) and [Pico Plus 2 W](https://shop.pimoroni.com/products/pimoroni-pico-plus-2-w) | a Pico Display Pack, and the SP/CE connector a Pico Display Pack 2.8 brings out |
+
+The Pico Plus 2 W and Plasma 2350 W carry their wireless module where the Pico Plus 2 and Plasma 2350 have their SP/CE connector, so neither has a SP/CE connector of its own.
+
+
+## Download Firmware
+
+A host needs a firmware with the `spidisplay` module built in. The standard firmware for these boards does not carry it yet, so download the one for your board from this repository's releases:
+
+* [spidisplay releases](https://github.com/pimoroni/spidisplay/releases/latest)
+
+There is one `.uf2` file per board, and the Pico Plus 2 file also suits the Pico Plus 2 W. Mighty FX firmware comes with the board, and updates are in the [picofx releases](https://github.com/pimoroni/picofx/releases).
+
+To flash a board, hold its BOOT button while plugging it into USB, and copy the `.uf2` file onto the drive that appears. The board restarts into the new firmware once the copy finishes.
 
 
 ## Getting Started
 
-Our boards often come pre-flashed with MicroPython and the libraries needed to get you started, and you program them with an interpreter such as [Thonny](https://thonny.org/). If you are new to working with Pico, this Learn Guide goes into more detail:
+With the firmware on your board, you program it with an interpreter such as [Thonny](https://thonny.org/). If you are new to working with Pico, this Learn Guide goes into more detail:
 
 * [Getting Started with Pico](https://learn.pimoroni.com/article/getting-started-with-pico)
 
