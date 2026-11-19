@@ -233,11 +233,24 @@ from screens import ScreenHub, Screen280
 from ports import ScreenPort
 from spce import SPCE_A_PINS, SPCE_B_PINS
 
-hub = ScreenHub(ScreenPort(SPCE_A_PINS), extra_cs=SPCE_B_PINS)   # Spare host GPIOs, or a second connector's five lines
+dc, cs, sck, mosi, bl = SPCE_B_PINS   # A second connector's five lines, or five spare GPIOs
+hub = ScreenHub(ScreenPort(SPCE_A_PINS), extra_cs=(cs, sck, mosi, dc, bl))   # In socket order, B to F
 screens = [Screen280(port) for port in hub.ports]
 ```
 
 `ports[0]` is the connector's own chip select and the rest follow `extra_cs` in the order given. The ports are lettered as well: `hub.a` is `ports[0]`, `hub.b` the next, matching the lettering on the hub itself. The letters run `a` to `z`, so any port past the twenty-sixth is reached through `ports`.
+
+The Screen Hub takes its five extra chip selects on a second SP/CE cable, each line carrying one socket. Wire that cable to five spare GPIOs, or to a second SP/CE connector, and name them in this order:
+
+| Hub socket | Line on the second cable |
+| --- | --- |
+| B | CS |
+| C | SCK |
+| D | MOSI |
+| E | DC |
+| F | BL |
+
+Socket A is the screen connector's own chip select. A hub wired to fewer GPIOs takes them in the same order, but its letters follow `extra_cs` rather than the sockets: GPIOs on only E and F come out as `hub.b` and `hub.c`.
 
 `te` names the line the tearing-effect signal comes back on, and defaults to the shared data/command line. That declares a diode on every breakout, which stops each panel's own signal from pulling the shared line down. Without diodes the panels divide the line and no signal survives, so a build without them passes `te=False`. The firmware cannot see a diode, so the declaration is yours.
 
