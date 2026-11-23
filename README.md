@@ -55,7 +55,7 @@ A host is an RP2350 board whose firmware carries the `spidisplay` module and nam
 
 | Host | Displays connect through |
 | --- | --- |
-| [Mighty FX](https://shop.pimoroni.com/products/mightyfx) | two SP/CE connectors, a display on each |
+| [Mighty FX](https://shop.pimoroni.com/products/mighty-fx) | two SP/CE connectors, a display on each |
 | [Pico Plus 2](https://shop.pimoroni.com/products/pimoroni-pico-plus-2) | one SP/CE connector |
 | [Pico LiPo 2](https://shop.pimoroni.com/products/pimoroni-pico-lipo-2) and [Pico LiPo 2 XL W](https://shop.pimoroni.com/products/pimoroni-pico-lipo-2-xl-w) | one SP/CE connector |
 | [Plasma 2350](https://shop.pimoroni.com/products/plasma-2350) | one SP/CE connector |
