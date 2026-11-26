@@ -398,6 +398,7 @@ class ScreenPort:
         # its backlight before that thing's own code has run. Pulled down is a cold
         # boot's own state at the pin.
         for pin in self.__pins[:4]:     # The BL stays, backlight_off() putting it out
+            pin.init(Pin.OUT, value=0)  # Low first, as an RP2350 A2 pad left high stays high under a pull-down
             pin.init(Pin.IN, Pin.PULL_DOWN)
 
     def shutdown(self):
