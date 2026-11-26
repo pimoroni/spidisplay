@@ -441,6 +441,10 @@ TeCapture SPIDisplay::te_capture(uint32_t edges, uint32_t timeout_ms) {
     return out;
 }
 
+bool SPIDisplay::te_level() const {
+    return read_te(te_line());
+}
+
 TePhase SPIDisplay::te_phase(SPIDisplay &first, SPIDisplay &second,
                              uint32_t period_us, uint32_t edges, uint32_t timeout_ms) {
     // Clamp to what the arrays below hold, sized by the capture limit
