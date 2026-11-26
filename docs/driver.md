@@ -122,6 +122,8 @@ RP2350 steppings before A4 carry erratum E9: a pad with its pull-down enabled la
 
 The driver reads the stepping once, from the bootrom version since CHIP_ID's revision field is the same on A3 and A4, and on those parts drives the line low for a microsecond and releases it before every read. A panel holding TE high recharges the line through its resistor or diode inside the settle, and a low stays low. Measured on an A2 Pico Plus 2, the frame time is unchanged.
 
+`te_level()` reads the line once in the same way, for code that polls TE itself, since a `Pin` read sees a latched line as high on these parts. A shared DC line must already be an input.
+
 ### The Counters
 
 Three cumulative counts say how the waits went, none of which is part of the frame snapshot:

@@ -608,9 +608,12 @@ class ScreenPair:
         # Read as inputs, whatever the last command left them as
         for pin in pins:
             pin.init(Pin.IN, pull=Pin.PULL_DOWN)
+
+        # Read the levels through the driver, as an RP2350 A2 pad needs driving low before each read
+        displays = tuple(screen.__display for screen in self.__screens)
         state = [DONE if schedule[i][FRAMES] <= 0 else WAITING for i in range(PANELS)]
         counts = [0] * PANELS
-        levels = [pin.value() for pin in pins]
+        levels = [display.te_level() for display in displays]
         start = time.ticks_ms()
 
         # Polled here, since each fall has to be answered with a command
@@ -620,7 +623,7 @@ class ScreenPair:
             for i in range(PANELS):
                 if state[i] == DONE:
                     continue
-                value = pins[i].value()
+                value = displays[i].te_level()
                 if value == levels[i]:
                     continue
                 levels[i] = value
@@ -634,7 +637,7 @@ class ScreenPair:
                     if counts[i] >= schedule[i][FRAMES]:
                         self.__set_rate(i, None)
                         state[i] = DONE
-                levels[i] = pins[i].value()     # That command moved the line, so re-read the level
+                levels[i] = displays[i].te_level()  # That command moved the line, so re-read the level
 
         # A timeout leaves a panel mid-plan, so put every unfinished one back
         for i in range(PANELS):

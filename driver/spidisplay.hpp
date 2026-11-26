@@ -272,6 +272,10 @@ public:
     // The pin TE is read from, its own line where it has one and the DC line otherwise
     uint te_line() const { return te_pin >= 0 ? (uint)te_pin : dc_pin; }
 
+    // The TE line's level now, read as the driver's own waits read it. A shared DC line
+    // must already be an input.
+    bool te_level() const;
+
     // Measure a pair's skew without a frame, both TE lines read in one loop and
     // neither holding one. skew_us is first's fall relative to second's, and age_us how
     // old the capture is at return, so a caller can price the drift since. Two panels

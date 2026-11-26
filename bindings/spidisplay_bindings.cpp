@@ -779,6 +779,13 @@ static mp_obj_t SPIDisplay_te_timeouts(mp_obj_t self_in) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(SPIDisplay_te_timeouts_obj, SPIDisplay_te_timeouts);
 
+// The TE line's level, as a bool
+static mp_obj_t SPIDisplay_te_level(mp_obj_t self_in) {
+    SPIDisplay_obj_t *self = (SPIDisplay_obj_t *)MP_OBJ_TO_PTR(self_in);
+    return mp_obj_new_bool(self->display.te_level());
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(SPIDisplay_te_level_obj, SPIDisplay_te_level);
+
 static mp_obj_t SPIDisplay_te_short_waits(mp_obj_t self_in) {
     SPIDisplay_obj_t *self = (SPIDisplay_obj_t *)MP_OBJ_TO_PTR(self_in);
     return mp_obj_new_int_from_uint(self->display.te_short_waits());
@@ -870,6 +877,7 @@ static const mp_rom_map_elem_t SPIDisplay_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_te_probe), MP_ROM_PTR(&SPIDisplay_te_probe_obj) },
     { MP_ROM_QSTR(MP_QSTR_te_capture), MP_ROM_PTR(&SPIDisplay_te_capture_obj) },
     { MP_ROM_QSTR(MP_QSTR_te_timeouts), MP_ROM_PTR(&SPIDisplay_te_timeouts_obj) },
+    { MP_ROM_QSTR(MP_QSTR_te_level), MP_ROM_PTR(&SPIDisplay_te_level_obj) },
     { MP_ROM_QSTR(MP_QSTR_te_short_waits), MP_ROM_PTR(&SPIDisplay_te_short_waits_obj) },
     { MP_ROM_QSTR(MP_QSTR_te_joined_waits), MP_ROM_PTR(&SPIDisplay_te_joined_waits_obj) },
     { MP_ROM_QSTR(MP_QSTR_wire_window_us), MP_ROM_PTR(&SPIDisplay_wire_window_obj) },
