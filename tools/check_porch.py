@@ -137,18 +137,20 @@ def capture_falls(count, timeout_ms=2000, on_fall=None):
     read_te()
     falls = []
     started = time.ticks_ms()
-    level = dc.value()
+
+    # Read the level through the driver, as an RP2350 A2 pad needs driving low before each read
+    level = display.te_level()
     while len(falls) < count:
         if time.ticks_diff(time.ticks_ms(), started) >= timeout_ms:
             break
-        value = dc.value()
+        value = display.te_level()
         if value != level:
             level = value
             if not value:
                 falls.append(time.ticks_us())
                 if on_fall is not None and on_fall(len(falls)):
                     read_te()
-                    level = dc.value()
+                    level = display.te_level()
     return falls
 
 
@@ -270,7 +272,7 @@ def latch(pair, steady, place, runs, s_line):
                 return False
             if wait:
                 spun = time.ticks_ms()
-                while not dc.value():       # out through the visible scan to the rise
+                while not display.te_level():   # out through the visible scan to the rise
                     if time.ticks_diff(time.ticks_ms(), spun) > 100:
                         break
                 rose = time.ticks_us()
